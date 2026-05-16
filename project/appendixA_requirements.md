@@ -1,7 +1,9 @@
-# PMS Use Cases (Appendix A)
+# Appendix A — Functional Requirements Reference Extract
 
-Reference extract of the 19 textual use cases from `SA_project_appendixA_requirements.pdf`.
-Source of truth is the PDF — this file is for fast lookup during architectural reasoning.
+Source: `SA_project_appendixA_requirements.pdf`. Part 1: Appendix A — actors + the 19 textual use cases.
+This file is the lookup-free reference; if something below contradicts the PDF, the PDF wins.
+
+> **Related**: API operations behind UC16 / UC17 (HIS interaction) are defined in `appendixB_APIs.md`.
 
 ## Actors (Fig. 1)
 
@@ -171,6 +173,7 @@ Source of truth is the PDF — this file is for fast lookup during architectural
 - **Pre:** UC10.
 - **Post:** PMS has received the patient record from HIS.
 - **Main:** PMS requests lookup → HIS performs lookup and returns the patient record.
+- **healthAPI calls** (see `appendixB_APIs.md`): `getPatient`, `searchPatient`, `getObservation`, `searchObservation`, `getRiskAssessment`, `searchRiskAssessment` (the read-side surface).
 
 ## UC17: update patient record
 - **Primary actor:** PMS
@@ -178,6 +181,7 @@ Source of truth is the PDF — this file is for fast lookup during architectural
 - **Pre:** PMS is monitoring a patient of the hospital.
 - **Post:** PMS provided info for the patient record in HIS.
 - **Main:** PMS sends update → HIS accepts and processes.
+- **healthAPI calls** (see `appendixB_APIs.md`): `savePatient`, `saveObservation`, `saveRiskAssessment` (occasionally `delete*`).
 
 ## UC18: consult monitoring summary
 - **Primary actor:** Patient

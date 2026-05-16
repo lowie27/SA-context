@@ -3,7 +3,7 @@
 Source: `SA_project_appendixB_APIs.pdf` (8 pp, 189 KB). Part 1: Appendix B: APIs.
 This file is the lookup-free reference; if something below contradicts the PDF, the PDF wins.
 
-> Consult this when designing anything that touches the **HIS boundary** — specifically UC16 (consult patient record) and UC17 (update patient record). For the P1 extension, this is the seam through which physician-facing data must flow.
+> Consult this when designing anything that touches the **HIS boundary** — specifically UC16 (consult patient record) and UC17 (update patient record). Full UC text in `appendixA_requirements.md`. For the P1 extension, this is the seam through which physician-facing data must flow.
 
 ## What this API is
 
