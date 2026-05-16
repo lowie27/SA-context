@@ -75,6 +75,14 @@ All design reasoning should explicitly consider these two concepts when evaluati
 
 - expected output is a markdown document explaining what needs to be changed, and what choices where made during the process
 
+## 5. Background reference material
+
+Don't scan PDFs blindly. Each of these folders has a `README.md` index that maps files to topics and tells you when to consult them — read the index first, then open the specific PDF only if needed.
+
+- `book/README.md` — Bass/Clements/Kazman "Software Architecture in Practice" chapters. Authoritative source for QA definitions and tactics catalogues. Most relevant: **ch4** (QAS structure), **ch8** (Performance — for P1), **ch5** (Availability — for Av2 seam), **ch16** (ATAM — for sensitivity / trade-off reasoning).
+- `lectures/README.md` — Course slide decks (L1–L7). Most relevant: **L4** (architectural views), **L5** (UML modeling — backs the conventions in §2), **L7** (ATAM evaluation), **L1 PMS intro** (domain).
+- `project/visual-paradigm/README.md` — SAPlugin manual and VP lab session. Reference only; per the hard constraints below, do not invoke the plugin or edit `.vpp` files.
+
 ## Hard constraints, user owns these tools
 
 - **Do not** run any LaTeX build. The user compiles locally.
