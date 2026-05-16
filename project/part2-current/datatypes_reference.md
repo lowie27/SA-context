@@ -121,11 +121,19 @@ If none fit, define a new type — and add it back here (in §7 if it's a P1 add
 
 ## 7. P1 additions (NOT in initial docs — introduced by `p1_current_design.md`)
 
-These types appear in P1's new interface signatures (`IPhysicianAPI`, `INotificationInbox`, `IRiskEvents`, `IOnDemandSensorFetch`, extended `LaunchRiskEstimation`). They must be created in VP as new data-type elements.
+These types appear in P1's new interface signatures (`IPhysicianAPI`, `INotificationInbox`, `IRiskEvents`, `IOnDemandSensorFetch`, extended `LaunchRiskEstimation`). They must be created in VP as new data-type elements (Convention 1 — globally unique names).
+
+> **VP entry convention used in this section.** Everything below is copy-paste ready into Visual Paradigm:
+> - **Description** for the class/enum in VP's *General* tab → use the **Purpose** line verbatim.
+> - **Attributes** of a structured payload → one line per attribute, format `+ name: Type` (UML standard: visibility, name, type). Default visibility is `+` (public) for everything in a data type. Optional fields are written `+ name: Type [0..1]` (UML multiplicity), or in shorthand notes here as `Type?`.
+> - **Literals** of an enum → one identifier per line, no commas.
+> - **Stereotype** — leave blank for plain data classes; use `«enumeration»` for enums (VP applies this automatically when you create the element as an Enumeration).
 
 ### 7.1 Identifiers (opaque, like `PatientId`)
 
-| Type | Used in | Purpose |
+These are simple identifier classes — model each as a data type with **no attributes** (the actual encoding — long, string, URI — is intentionally left open, same convention as `PatientId` in §E.6). The Purpose line is the class description.
+
+| Type | Used in | Purpose (paste into VP description) |
 | --- | --- | --- |
 | ⭐ `CorrelationId` | `IOnDemandSensorFetch.requestCurrentSensorData`, extended `LaunchRiskEstimation`, `RiskEvent` payload, `FilterCriteria` | Cross-component tag that ties a UC9 on-demand consultation to its eventual risk-estimation result. |
 | `ConsultationId` | `IPhysicianAPI.requestOnDemandConsultation` return | UC9 handle returned to the physician. **Open question (§6 OQ in design): probably the same thing as `CorrelationId` — consider merging into one type.** |
@@ -136,18 +144,58 @@ These types appear in P1's new interface signatures (`IPhysicianAPI`, `INotifica
 
 ### 7.2 Structured payloads
 
-| Type | Likely attributes | Purpose |
-| --- | --- | --- |
-| `Notification` | `NotificationId id; PatientId patientId; PatientStatus status; NotificationSeverity severity; Timestamp ts` | UC5 payload returned to physicians via `INotificationInbox.getPendingNotifications`. |
-| `RiskEvent` | `PatientId patientId; PatientStatus status; Timestamp ts; CorrelationId? correlationId` | Payload pushed to `IRiskEvents` subscribers when `setEstimatedPatientStatus` actually changes the stored status. |
-| `FilterCriteria` | `CorrelationId? correlationId` (extensible) | Optional filter passed to `IRiskEvents.subscribe`. Empty for NotificationDispatcher (wants every event); carries a correlationId for PhysicianCommandService UC9 result lookup. |
+Each one is a data-type class. Use **Purpose** as the description, paste the **Attributes** block line-by-line into VP's Attributes table.
+
+#### `Notification`
+- **Purpose:** UC5 payload returned to physicians via `INotificationInbox.getPendingNotifications`.
+- **Attributes:**
+  ```
+  + id: NotificationId
+  + patientId: PatientId
+  + status: PatientStatus
+  + severity: NotificationSeverity
+  + ts: Timestamp
+  ```
+
+#### `RiskEvent`
+- **Purpose:** Payload pushed to `IRiskEvents` subscribers when `setEstimatedPatientStatus` actually changes the stored status.
+- **Attributes:**
+  ```
+  + patientId: PatientId
+  + status: PatientStatus
+  + ts: Timestamp
+  + correlationId: CorrelationId [0..1]
+  ```
+
+#### `FilterCriteria`
+- **Purpose:** Optional filter passed to `IRiskEvents.subscribe`. Empty for NotificationDispatcher (wants every event); carries a correlationId for PhysicianCommandService UC9 result lookup.
+- **Attributes:**
+  ```
+  + correlationId: CorrelationId [0..1]
+  ```
+  *(Extensible — add more optional fields here if future filters need them.)*
 
 ### 7.3 Enums
 
-| Enum | Values | Used in |
-| --- | --- | --- |
-| `NotificationSeverity` | `red, yellow, green` | `Notification.severity`. Drives the dispatcher's priority queue + drop policy (Response measure 5). |
-| `Priority` | `HIGH, NORMAL` (minimum) | Extended `LaunchRiskEstimation` arg. UC9 uses `HIGH`; default `NORMAL` preserves legacy callers. **Open: if this enum is shared with P2's EDF tiers, it also needs `MEDIUM, LOW` — see `p1_current_design.md` §7 hard overlap #1 (teammate coordination).** |
+Each one is an **Enumeration** in VP (right-click → New → Enumeration). Use **Purpose** as the description; paste the literals one per line into the Enumeration Literals table.
+
+#### `NotificationSeverity`
+- **Purpose:** Severity of a `Notification`. Drives the dispatcher's priority queue + drop policy (Response measure 5: red > yellow > green; green dropped first under overload).
+- **Literals:**
+  ```
+  red
+  yellow
+  green
+  ```
+
+#### `Priority`
+- **Purpose:** Priority of a launched risk-estimation job. UC9 uses `HIGH`; `NORMAL` is the default for legacy schedule-driven jobs.
+- **Literals:**
+  ```
+  HIGH
+  NORMAL
+  ```
+- **Open question:** if this enum is shared with P2's EDF tiers, it also needs `MEDIUM` and `LOW` — see `p1_current_design.md` §7 hard overlap #1 (teammate coordination).
 
 ### 7.4 Quick "are you sure this is new?" check
 
