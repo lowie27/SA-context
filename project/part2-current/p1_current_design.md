@@ -197,6 +197,10 @@ They all need subdiagrams aswell to work them out a bit more, or do they? when i
 
 ### 2b. Interfaces
 
+> **Custom-type marker (`†`)** — types not defined in initial-architecture §E.6 are marked with `†` on first use within each interface block. Full definitions in `datatypes_reference.md` §7.
+> Custom types used in P1: `ConsultationId`†, `CorrelationId`†, `PhysicianId`†, `Notification`†, `NotificationId`†, `NotificationSeverity`† *(implied, lives inside `Notification`)*, `SubscriberId`†, `SubscriptionId`†, `FilterCriteria`†, `RiskEvent`†, `Priority`†.
+> Everything *not* marked with `†` already exists in §E.6 / §E.5 — reuse verbatim.
+
 new interfaces, like you style of displaying the interface keep it like this!
 
 - `IPhysicianAPI` <!-- [claude] new — gateway had no provided interface, so was unreachable -->
@@ -204,10 +208,10 @@ new interfaces, like you style of displaying the interface keep it like this!
     - required by: external (physicians calling into the PMS)
     - operations (all `+`):
         - `consultPatientStatus(PatientId) → PatientStatus` — UC6
-        - `requestOnDemandConsultation(PatientId) → ConsultationId` — UC9; `ConsultationId` is the correlationId used to match the eventual result
+        - `requestOnDemandConsultation(PatientId) → ConsultationId†` — UC9; `ConsultationId` is the correlationId used to match the eventual result
         - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — UC7
-        - `updatePatientRiskLevel(PatientId, PatientStatus)` — UC8
-        - `subscribeToNotifications(PhysicianId)` — UC5; lets the gateway deliver notifications back to this physician
+        - `updatePatientRiskLevel(PatientId, PatientStatus)` — UC8ccc
+        - `subscribeToNotifications(PhysicianId†)` — UC5; lets the gateway deliver notifications back to this physician
 - `IPhysicianCommand`
     - provided by: `PhysicianCommandService`
     - required by:
@@ -215,7 +219,7 @@ new interfaces, like you style of displaying the interface keep it like this!
     - operations (all `+`):
         - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — UC7
         - `updatePatientRiskLevel(PatientId, PatientStatus)` — UC8
-        - `requestOnDemandConsultation(PatientId) → ConsultationId` — UC9
+        - `requestOnDemandConsultation(PatientId) → ConsultationId†` — UC9
 - `IPatientQuery`
     - provided by: `PatientQueryService`
     - required by:
@@ -227,10 +231,10 @@ new interfaces, like you style of displaying the interface keep it like this!
     - required by:
         - `PhysicianGateway`
     - operations (all `+`):
-        - `subscribeToNotifications(PhysicianId)` — register a physician to receive notifications
+        - `subscribeToNotifications(PhysicianId†)` — register a physician to receive notifications
         - `unsubscribeFromNotifications(PhysicianId)`
-        - `getPendingNotifications(PhysicianId) → List<Notification>` — gateway pulls queued notifications for a physician (poll model; long-poll or websocket as an implementation choice)
-        - `acknowledgeNotification(NotificationId)` — gateway confirms delivery so the dispatcher can drop it from its durable queue
+        - `getPendingNotifications(PhysicianId) → List<Notification†>` — gateway pulls queued notifications for a physician (poll model; long-poll or websocket as an implementation choice). `Notification` carries a `NotificationSeverity†` (red/yellow/green).
+        - `acknowledgeNotification(NotificationId†)` — gateway confirms delivery so the dispatcher can drop it from its durable queue
 - `IHISAccess`
     - provided by: `HISAdapter`
     - required by:
@@ -251,9 +255,9 @@ new interfaces, like you style of displaying the interface keep it like this!
         - `NotificationDispatcher` (UC5 notify)
         - `PhysicianCommandService` (UC9 result delivery)
     - operations (all `+`):
-        - `subscribe(SubscriberId, FilterCriteria) → SubscriptionId` — register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (NotificationDispatcher gets every event)
+        - `subscribe(SubscriberId†, FilterCriteria†) → SubscriptionId†` — register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (NotificationDispatcher gets every event)
         - `unsubscribe(SubscriptionId)`
-    - note: event payload delivered to subscribers is `RiskEvent(PatientId, PatientStatus, Timestamp, CorrelationId?)`. Fired by PatientStatusModule when `setEstimatedPatientStatus` actually changes the stored status.
+    - note: event payload delivered to subscribers is `RiskEvent†(PatientId, PatientStatus, Timestamp, CorrelationId†?)`. Fired by PatientStatusModule when `setEstimatedPatientStatus` actually changes the stored status.
 - `IPatientStatusRead`  <!-- [claude] new -->
     - provided by: `PatientStatusCache`
     - required by:
@@ -265,7 +269,7 @@ new interfaces, like you style of displaying the interface keep it like this!
     - required by:
         - `PhysicianCommandService`
     - operations (all `+`):
-        - `requestCurrentSensorData(PatientId, CorrelationId) → SensorDataPackage` — synchronous with timeout sized inside the 3-min UC9 initiation budget
+        - `requestCurrentSensorData(PatientId, CorrelationId†) → SensorDataPackage` — synchronous with timeout sized inside the 3-min UC9 initiation budget
 
 <!-- [claude] IPatientRecord dropped — was based on the wrong assumption that we needed a new interface for the cache miss path. The cache reuses the existing OtherDataMgmt instead (§E.3.19). See the existing-interfaces section below. -->
 
@@ -306,7 +310,7 @@ existing interfaces reused verbatim from rationale PDF §E.3 <!-- [claude] verif
         - `PatientDataService`.SensorIngestModule
         - `PhysicianCommandService` (UC9 priority launch with correlationId)
     - operations (all `+`):
-        - `launchRiskEstimation(PatientId, SensorDataPackage, Timestamp, priority: Priority = NORMAL, correlationId: CorrelationId? = null)` — §E.3.11 plus two new optional parameters. `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets PhysicianCommandService match the eventual `IRiskEvents` event back to the originating UC9 request. Default values preserve legacy callers.  <!-- [claude] extension flagged in §7 — needs teammate sign-off on the priority lattice -->
+        - `launchRiskEstimation(PatientId, SensorDataPackage, Timestamp, priority: Priority† = NORMAL, correlationId: CorrelationId†? = null)` — §E.3.11 plus two new optional parameters. `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets PhysicianCommandService match the eventual `IRiskEvents` event back to the originating UC9 request. Default values preserve legacy callers.  <!-- [claude] extension flagged in §7 — needs teammate sign-off on the priority lattice -->
 - `ClinicalModelCacheMgmt`
     - provided by: `ClinicalModelCache` (unchanged)
     - required by:
