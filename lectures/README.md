@@ -9,7 +9,7 @@ Lecture slides for the Software Architectures course. The book (`/book`) is the 
 | Folder | Files | Topic | When to consult |
 |---|---|---|---|
 | `L1` | `SA_L01_1_overview_organization.pdf` | Course overview & organization | Skip — administrative. |
-| `L1` | `SA_L01_2_PMS_intro.pdf` | **Patient Monitoring System (PMS) case introduction** | Foundational context for the whole project — domain, actors, why the system exists. Pair with `project/SA_project_description.pdf`. |
+| `L1` | `SA_L01_2_PMS_intro.pdf` | **Patient Monitoring System (PMS) case introduction** | Foundational context for the whole project — domain, actors, why the system exists. Pair with `project/description.md`. |
 | `L1` | `SA_L01_3_process_requirements.pdf` | Architecture process & requirements gathering | Background for Part 1 (already finished). |
 | `L2` | `SA_L02_intro.pdf` | Lecture 2 intro | Short framing deck. |
 | `L2` | `SA_L02_software_quality.pdf` | **Software quality & quality attributes** | Definitions of QAs, QAS template, utility tree. Read alongside `book/SA_book_ch4_QAS.pdf`. |

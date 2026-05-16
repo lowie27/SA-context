@@ -301,7 +301,7 @@ GDPR-style "right of access": users can obtain a copy of personal data processed
 
 | Selected QAS | Section | Owner | File where the design lives |
 |---|---|---|---|
-| **P1 — Data exchange with physicians (M)** | §7.3 | mine | `p1_current.md` |
+| **P1 — Data exchange with physicians (M)** | §7.3 | mine | `p1_current_design.md` |
 | **Av2 — Gateway↔backend comm (H)** | §7.5 | teammate | (teammate's workspace — do not edit) |
 
 Initial architecture already covers **P2** (Performance — risk-estimation throughput) and **M2** (Modifiability — clinical model updates). See `initial_architecture.md` §2.

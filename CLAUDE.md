@@ -8,10 +8,10 @@ This file provides the necessary architectural context and modeling rules for Cl
 - **Part 2**: active. All work happens in `project/part2-current/` — see `project/part2-current/README.md` for the file map (instructions extract, initial-architecture extract, P1 design draft, source PDFs).
 - **Goal**: quality-driven extension of the initial Patient Monitoring Service (PMS) architecture.
 - **QAS ownership**:
-  - **P1 (Medium)** — mine. Design lives in `project/part2-current/p1_current.md`.
-  - **Av2 (High)** — teammate's. **Do not edit.** Coordination notes in `p1_current.md` §7.
+  - **P1 (Medium)** — mine. Design lives in `project/part2-current/p1_current_design.md`.
+  - **Av2 (High)** — teammate's. **Do not edit.** Coordination notes in `p1_current_design.md` §7.
 
-Full use-case text + index: `project/use_cases.md`. The folder-level READMEs (see §5) point at every other reference.
+Full use-case text + index: `project/appendixA_requirements.md`. The folder-level READMEs (see §5) point at every other reference.
 
 ## 1.1 Architectural Reasoning Model (ATAM-inspired)
 
@@ -57,8 +57,8 @@ All design reasoning should explicitly consider these two concepts when evaluati
 
 Folder indexes (each one is self-contained):
 
-- `project/README.md` — Course-provided assignment materials at top of `/project/`: domain description, appendix A (extracted to `project/use_cases.md`), appendix B (healthAPI / HIS interface).
-- `project/part2-current/README.md` — Active workspace: `instructions.md`, `initial_architecture.md`, `p1_current.md`, source PDFs.
+- `project/README.md` — Course-provided assignment materials at top of `/project/`. All three appendices have markdown extracts: `description.md`, `appendixA_requirements.md`, `appendixB_APIs.md`.
+- `project/part2-current/README.md` — Active workspace: `instructions.md`, `initial_architecture.md`, `p1_current_design.md`, source PDFs.
 - `project/part1/README.md` — Finished Part 1 deliverables + **instructor feedback PDF** (worth skimming for recurring weaknesses).
 - `project/visual-paradigm/README.md` — SAPlugin manual + VP lab session. Reference only; per hard constraints below, do not invoke the plugin or edit `.vpp` files.
 - `book/README.md` — Bass/Clements/Kazman *Software Architecture in Practice* chapters. Authoritative source for QA definitions and tactics catalogues. Most relevant: **ch4** (QAS structure), **ch8** (Performance — for P1), **ch5** (Availability — for Av2 seam), **ch16** (ATAM — for sensitivity / trade-off reasoning).

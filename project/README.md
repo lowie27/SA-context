@@ -6,12 +6,13 @@ Course-provided project documents and team workspace. This file documents what l
 
 ## Top-level files
 
-| File | Topic | When to consult |
-|---|---|---|
-| `SA_project_description.pdf` | **Domain description** — high-level context, business objectives, problem space for the PMS. | Read once to ground yourself in why the system exists. Pair with `lectures/L1/SA_L01_2_PMS_intro.pdf`. |
-| `SA_project_appendixA_requirements.pdf` | **Functional requirements** — the 19 textual use cases + actors. | **Prefer the markdown extract** at `use_cases.md` (in this folder) — it covers all 19 UCs with pre/post/main/alt. Open the PDF only to check a figure or wording the markdown doesn't preserve. |
-| `SA_project_appendixB_APIs.pdf` | **healthAPI specification** — interface the PMS uses to interoperate with the external Hospital Information System (HIS). | Consult when designing anything that touches the HIS boundary — UC16 (consult patient record) and UC17 (update patient record). Relevant if the P1 extension introduces caching, batching, or async patterns at the HIS seam. |
-| `use_cases.md` | Lookup-free extract of appendix A: actors + all 19 UCs (pre / post / main / alt) + QAS-P1 touchpoint table. | Default reference for any UC↔component reasoning. Lives at `/project/` (not under `part2-current/`) because it's project-wide reference material, not Part 2-specific work product. |
+Each course-provided PDF has a paired `.md` extract. **Use the `.md` by default**, open the PDF only as last resort (figure or wording nuance).
+
+| MD extract | Paired PDF | Topic | When to consult |
+|---|---|---|---|
+| `description.md` | `SA_project_description.pdf` | **Domain description** — context (CVDs, e-health, positioning), problem domain (monitoring / risk estimation / notifications / emergencies), stakeholders, key building blocks (HIS, GDPR, security). | Read once to ground yourself in why the PMS exists and what it must do. Pairs with `lectures/L1/SA_L01_2_PMS_intro.pdf`. |
+| `appendixA_requirements.md` | `SA_project_appendixA_requirements.pdf` | **Functional requirements** — actors + all 19 textual use cases (pre / post / main / alt) + QAS-P1 touchpoint table. | Default reference for any UC↔component reasoning. |
+| `appendixB_APIs.md` | `SA_project_appendixB_APIs.pdf` | **healthAPI specification** — reduced FHIR subset for HIS interop; Patient/Observation/RiskAssessment resources + supporting data types. | Consult for anything that touches the HIS boundary — UC16 (consult patient record), UC17 (update patient record). Relevant for the P1 extension's HIS-seam decisions (caching, batching, async). |
 
 ## Subdirectories
 

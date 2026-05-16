@@ -11,7 +11,7 @@ The architecture is **incomplete on purpose**: a gray `OtherFunctionality` compo
 
 - System: Patient Monitoring Service (PMS) — monitors cardiovascular patients via wearable sensors, runs risk estimation, notifies physicians.
 - Two QASs already decided in the initial design: **P2 (Performance — risk-estimation throughput)** and **M2 (Modifiability — clinical model updates at runtime)**. Both are baked into the architecture below.
-- The remaining QASs (P1, Av2, …) are addressed by the Part-2 extensions in `p1_current.md` (mine) and the teammate's Av2 work.
+- The remaining QASs (P1, Av2, …) are addressed by the Part-2 extensions in `p1_current_design.md` (mine) and the teammate's Av2 work.
 
 ---
 
