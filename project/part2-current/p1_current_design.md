@@ -80,6 +80,22 @@ i like this suggestions
 
 ### 2a. Components
 
+**VP entry checklist — for every new component below:**
+
+1. **Description**: one short sentence in VP's General tab. Just paste the `role:` line.
+
+2. **Operations**: list each operation the component exposes. For each operation, fill in four fields in VP:
+    - **name** — what the operation is called, e.g. `getPatientStatus`
+    - **classifier** — the type of each parameter, e.g. `PatientId`, `SensorDataPackage`. ("Classifier" is just UML jargon for "type". A parameter's classifier = the parameter's type.)
+    - **visibility** — `+` public, `-` private, `#` protected, `~` package. Anything reachable through a provided interface is `+`.
+    - **return type** — what the operation returns, e.g. `PatientStatus`. Use `void` if it returns nothing.
+
+3. **Format to copy**: write signatures the same way `initial_architecture.md` §6 does:
+    - `getPatientStatus(PatientId) → PatientStatus`
+    - `setEstimatedPatientStatus(PatientId, PatientStatus, Timestamp)` *(no arrow = void)*
+
+4. **Where the operations live in UML**: on the provided interface, not on the component itself. The component "realises" (implements) the interface, so anything you put on the interface is what the component has to implement. If the assignment / tooling asks for operations on the component box too, just duplicate them there.
+
 new components, like your style of defining components very clear!
 
 - `PhysicianGateway`
@@ -187,8 +203,7 @@ They all need subdiagrams aswell to work them out a bit more, or do they? when i
 
 new interfaces, like you style of displaying the interface keep it like this!
 
-- `IPhysicianAPI`
-<!-- [claude] new — gateway had no provided interface, so was unreachable -->
+- `IPhysicianAPI` <!-- [claude] new — gateway had no provided interface, so was unreachable -->
     - provided by: PhysicianGateway
     - required by: external (physicians calling into the PMS)
 - `IPhysicianCommand`
