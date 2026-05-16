@@ -4,39 +4,14 @@ This file provides the necessary architectural context and modeling rules for Cl
 
 ## 1. Project Status & Workspace
 
-- Part 1 Status: Finished. Requirements analysis, Utility Tree, and initial ASRs are complete. No further work is needed on Part 1 materials.
-- Active Directory: All Part 2 work occurs in part2-current.
-- Archived Files: The directory part2-archive is deprecated and not used.
+- **Part 1**: finished. Requirements analysis, Utility Tree, and initial ASRs are complete. See `project/part1/README.md` (instructor feedback PDF lives there and is worth skimming for recurring weaknesses).
+- **Part 2**: active. All work happens in `project/part2-current/` — see `project/part2-current/README.md` for the file map (instructions extract, initial-architecture extract, P1 design draft, source PDFs).
+- **Goal**: quality-driven extension of the initial Patient Monitoring Service (PMS) architecture.
+- **QAS ownership**:
+  - **P1 (Medium)** — mine. Design lives in `project/part2-current/p1_current.md`.
+  - **Av2 (High)** — teammate's. **Do not edit.** Coordination notes in `p1_current.md` §7.
 
-- Goal: Perform a quality-driven extension of the initial Patient Monitoring Service (PMS) architecture.
-
-- QAS ownership: P1 (Performance) is mine — edit freely. Av2 (Availability) is the teammate's — do not edit.
-- P1 design draft: `project/part2-current/p1_current.md` holds my **current proposal** for how to extend the architecture to satisfy P1 — not a snapshot of the existing system. Treat it as a living draft to stress-test: anchor on the QAS in §0, then push back on the approach in §1–§3 and surface sensitivity / trade-off points the draft misses. §7 lists the seams with the Av2 teammate.
-- Initial architecture reference: `project/part2-current/initial_architecture.md` is a lookup-free extract of the rationale PDF (`SA_project_part2_inital_architecture_including_rationale.pdf`). Read that file when reasoning about existing components, interfaces, nodes, or sequence flows. **Prefer it over the PDF** — only open the PDF if the readme doesn't answer the question.
-- Part 2 instructions reference: `project/part2-current/instructions.md` is a lookup-free extract of the assignment brief (`SA_project_part2_instructions.pdf`). Covers the task, "fully supports" criteria, trade-off analysis requirements, required views, report structure, deadline, and all 6 candidate QASs (including P1 and Av2 in full). **Prefer it over the PDF** — open the PDF only if a wording nuance matters.
-- Use cases: full textual UCs live in `project/use_cases.md`. Read that file when reasoning about UC↔component mapping. Quick index:
-
-| UC | Name | Primary actor |
-|---|---|---|
-| UC1 | log in | User |
-| UC2 | log off | User |
-| UC3 | send emergency notification | Patient (via gateway) |
-| UC4 | send sensor data | Patient (via gateway) |
-| UC5 | notify registered parties | PMS |
-| UC6 | consult patient status | Physician or Patient |
-| UC7 | configure patient risk assessment | Cardiologist |
-| UC8 | update risk level | Cardiologist |
-| UC9 | perform on-demand consultation | Cardiologist |
-| UC10 | register patient | Trained nurse |
-| UC11 | deregister patient | Trained nurse |
-| UC12 | estimate risk level | PMS |
-| UC13 | retrieve new ML models | Telemedicine operator |
-| UC14 | download ML model | PMS |
-| UC15 | update ML model | Telemedicine operator |
-| UC16 | consult patient record | PMS |
-| UC17 | update patient record | PMS |
-| UC18 | consult monitoring summary | Patient |
-| UC19 | request access to personal data | User |
+Full use-case text + index: `project/use_cases.md`. The folder-level READMEs (see §5) point at every other reference.
 
 ## 1.1 Architectural Reasoning Model (ATAM-inspired)
 
@@ -78,12 +53,16 @@ All design reasoning should explicitly consider these two concepts when evaluati
 
 ## 5. Background reference material
 
-Don't scan PDFs blindly. Each of these folders has a `README.md` index that maps files to topics and tells you when to consult them — read the index first, then open the specific PDF only if needed.
+> **Rule: prefer `.md` over `.pdf`. PDFs are last resort** — only open a source PDF when a wording nuance or figure matters that the markdown extract doesn't preserve. Every folder below has a `README.md` index; read the index first, then open files on demand.
 
-- `project/README.md` — Course-provided assignment materials: domain description, appendix A (requirements — extracted to `project/use_cases.md`), appendix B (healthAPI / HIS interface), `part1/` (finished, but contains **instructor feedback PDF** worth checking for Part 2), and pointer to the Part 2 instructions PDF.
-- `book/README.md` — Bass/Clements/Kazman "Software Architecture in Practice" chapters. Authoritative source for QA definitions and tactics catalogues. Most relevant: **ch4** (QAS structure), **ch8** (Performance — for P1), **ch5** (Availability — for Av2 seam), **ch16** (ATAM — for sensitivity / trade-off reasoning).
-- `lectures/README.md` — Course slide decks (L1–L7). Most relevant: **L4** (architectural views), **L5** (UML modeling — backs the conventions in §2), **L7** (ATAM evaluation), **L1 PMS intro** (domain).
-- `project/visual-paradigm/README.md` — SAPlugin manual and VP lab session. Reference only; per the hard constraints below, do not invoke the plugin or edit `.vpp` files.
+Folder indexes (each one is self-contained):
+
+- `project/README.md` — Course-provided assignment materials at top of `/project/`: domain description, appendix A (extracted to `project/use_cases.md`), appendix B (healthAPI / HIS interface).
+- `project/part2-current/README.md` — Active workspace: `instructions.md`, `initial_architecture.md`, `p1_current.md`, source PDFs.
+- `project/part1/README.md` — Finished Part 1 deliverables + **instructor feedback PDF** (worth skimming for recurring weaknesses).
+- `project/visual-paradigm/README.md` — SAPlugin manual + VP lab session. Reference only; per hard constraints below, do not invoke the plugin or edit `.vpp` files.
+- `book/README.md` — Bass/Clements/Kazman *Software Architecture in Practice* chapters. Authoritative source for QA definitions and tactics catalogues. Most relevant: **ch4** (QAS structure), **ch8** (Performance — for P1), **ch5** (Availability — for Av2 seam), **ch16** (ATAM — for sensitivity / trade-off reasoning).
+- `lectures/README.md` — Course slide decks (L1–L7). Most relevant: **L4** (architectural views), **L5** (UML modeling — backs the conventions in §2), **L7** (ATAM evaluation), **L1** (PMS domain intro).
 
 ## Hard constraints, user owns these tools
 

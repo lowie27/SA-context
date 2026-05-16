@@ -2,6 +2,8 @@
 
 Lecture slides for the Software Architectures course. The book (`/book`) is the deeper reference; lectures are useful for the course-specific framing, the PMS case study, and instructor emphasis (which tactics / views are expected in the deliverables).
 
+> **Repo rule: prefer `.md` over `.pdf` everywhere.** This folder has no markdown extracts (slides are visual artifacts that don't extract cleanly), so the PDFs are the primary reference here. Use the index below to avoid opening decks blindly.
+
 ## Index
 
 | Folder | Files | Topic | When to consult |

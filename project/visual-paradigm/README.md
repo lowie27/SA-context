@@ -2,6 +2,8 @@
 
 Materials for the modeling tool used in this course. **Claude should not run or invoke either of these** — per the hard constraints in CLAUDE.md, the user owns all VP work and the SAPlugin. These files exist for human reference.
 
+> **Repo rule: prefer `.md` over `.pdf` everywhere.** No markdown extracts exist for this folder (and none are planned — Claude is not expected to dig into VP internals).
+
 ## Files
 
 | File | Purpose | Claude's role |

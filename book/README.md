@@ -1,6 +1,8 @@
 # Book — Software Architecture in Practice (Bass, Clements, Kazman)
 
-Reference textbook for the course. Use these chapters when you need authoritative definitions of quality attributes, tactics catalogues, or QAS structure. Prefer the chapter PDF over the full book PDF — they cover the same material but the chapter file is far smaller.
+Reference textbook for the course. Use these chapters when you need authoritative definitions of quality attributes, tactics catalogues, or QAS structure.
+
+> **Repo rule: prefer `.md` over `.pdf` everywhere.** This folder has no markdown extracts (the chapter PDFs are themselves the reference), so the rule degrades to: prefer the **chapter PDF** over the full-book PDF — same material, much smaller file.
 
 ## Files
 

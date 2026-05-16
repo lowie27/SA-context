@@ -1,6 +1,8 @@
 # Project — assignment materials
 
-Course-provided project documents and team workspace. The subfolders each have their own index (or are covered directly by CLAUDE.md); this file documents what lives at the top of `/project/`.
+Course-provided project documents and team workspace. This file documents what lives at the top of `/project/`; each subfolder has its own `README.md`.
+
+> **Prefer `.md` over `.pdf`. PDFs are last resort** — open a source PDF only when a figure or wording nuance matters that the markdown doesn't preserve.
 
 ## Top-level files
 
@@ -15,6 +17,6 @@ Course-provided project documents and team workspace. The subfolders each have t
 
 | Path | What's there | Indexed by |
 |---|---|---|
-| `part1/` | Finished Part 1 deliverables + instructor feedback. Contains `SA_project_part1_instructions.pdf`, `SA_project_part1_template.pdf`, and **`Goddé_Ramaekers_VanVyve_feedback.pdf`** (graded feedback on our submission). Worth skimming the feedback PDF before Part 2 design decisions — it tells us what the instructors flagged as weak in our requirements / utility tree / ASRs, and those weaknesses may resurface in Part 2 if not addressed. | This file. |
-| `part2-current/` | **Active workspace.** Contains `initial_architecture.md` (extract of the rationale PDF), `instructions.md` (extract of the assignment brief), `p1_current.md` (P1 design draft), plus the source PDFs (`SA_project_part2_inital_architecture_including_rationale.pdf`, `SA_project_part2_instructions.pdf`). Prefer the `.md` extracts. | Covered directly by CLAUDE.md §1. |
-| `visual-paradigm/` | SAPlugin manual and VP lab session — tooling Claude must not invoke. | `visual-paradigm/README.md`. |
+| `part1/` | Finished Part 1 deliverables + instructor feedback PDF. | `part1/README.md` |
+| `part2-current/` | **Active workspace** — instructions extract, initial-architecture extract, P1 design draft, source PDFs. | `part2-current/README.md` |
+| `visual-paradigm/` | SAPlugin manual + VP lab session. Tooling — Claude must not invoke. | `visual-paradigm/README.md` |
