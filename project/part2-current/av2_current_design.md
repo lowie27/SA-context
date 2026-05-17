@@ -150,6 +150,7 @@ new components (fill in from teammate's design)
         - `BufferedDataDispatch`, `AvailabilityMonitoring`
     - requires:
         - `GatewayDataIngress`
+    - **decomposed — see §2c**
 
 #### MonitoringService
 
@@ -160,6 +161,7 @@ new components (fill in from teammate's design)
         - `RecoveryCoordination`, `NotificationDispatch`
     - requires:
         - `AvailabilityMonitoring`
+    - **decomposed — see §2c**
 
 #### PatientGateway
 
@@ -170,6 +172,7 @@ new components (fill in from teammate's design)
         - `EmergencyDispatch`, `GatewayDataIngress`
     - requires:
         - `DeliveryAck`, `BackupEmergencyIngress`, `GatewayResyncCommand`
+    - **decomposed — see §2c**
 
 #### RecoverySyncService
 
@@ -404,7 +407,46 @@ existing interfaces reused verbatim (no change vs. initial architecture)
 
 - TODO — list them with one line each (provided by / required by). Refer to §E.3 for signatures.
 
-### 2c. Deployment changes
+### 2c. Decomposed components
+
+> Each subsection below is a decomposition view (Conv. 5) for one parent component listed in §2a. Modules carry the `<<module>>` stereotype in VP. Internal interfaces (defined in §2d) do not appear on the C&C diagram.
+>
+> **Not worked out yet.** Skeleton only — populate modules and their internal wiring once Av2's internal structure is decided. Each module needs a `description:`, a `provides:` list (any external or internal interface), and a `requires:` list (Conv. 4: at least one child of a decomposed parent must still expose each parent-level interface).
+
+#### CommunicationGateway
+
+- `decomposed` into modules (decomposition view — Conv. 5):
+    - TODO — list internal modules. Per the §2a description, candidates include: an authentication front, a routing/dispatch module (provides `BufferedDataDispatch`), a heartbeat tracker (provides `AvailabilityMonitoring`), a retry/backoff coordinator, and an ack-emission module. Confirm with teammate before wiring in VP.
+
+#### MonitoringService
+
+- `decomposed` into modules (decomposition view — Conv. 5):
+    - TODO — list internal modules. Per the §2a description, candidates include: a missing-sensor-data detector, an internal-subsystem failure detector, an SLA-violation detector, a failure classifier (by patient risk level), a notification dispatcher module (provides `NotificationDispatch`), a gap-duration recorder, and a recovery orchestrator (provides `RecoveryCoordination`). Confirm with teammate before wiring in VP.
+
+#### PatientGateway
+
+- `decomposed` into modules (decomposition view — Conv. 5):
+    - TODO — list internal modules. Per the §2a description, candidates include: a sensor-acquisition module, a primary-channel transmitter (provides `GatewayDataIngress`), a battery/network health monitor, a `LocalBufferingRepository`, a `RetryAndSynchronizationService`, and a backup emergency dispatcher (provides `EmergencyDispatch`). Confirm with teammate before wiring in VP.
+
+### 2d. Internal interfaces
+
+> These interfaces exist purely inside a single component's decomposition view (see §2c). They do **not** appear on the C&C diagram and have no callers outside their parent component. Listed here so that each module-to-module call in §2c has a backing required interface per Conv. 3 and Conv. 6.
+>
+> **Not worked out yet.** Will populate alongside §2c.
+
+TODO — fill in once §2c modules are finalised, using the same template as §2b:
+
+```
+- `InternalInterfaceName`
+    - provided by: `Module` (module of `ParentComponent`)
+    - required by:
+        - `Module` (module of `ParentComponent`)
+    - operations (all `+`):
+        - `operationName(paramname: ParamType, ...): ReturnType` — inline note
+    - purpose: one-line explanation
+```
+
+### 2e. Deployment changes
 
 > Mirror the P1 §2c sketch: which nodes are added/retired/relocated, which communication paths are added.
 
