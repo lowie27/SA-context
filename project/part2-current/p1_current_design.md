@@ -204,6 +204,8 @@ new components, like your style of defining components very clear!
 >
 > **Interface entry convention** — every interface entry follows this template:
 > - operations use `paramname: ParamType, ...): ReturnType` (colon syntax for return type; void operations omit the trailing `: ReturnType`)
+> - every operation has an `effect:` sub-bullet (paste into VP operation's Documentation tab — [Gen.desc.04])
+> - every non-void operation also has a `returns:` sub-bullet (paste into the return type's Documentation tab — [Gen.desc.05])
 > - every interface ends with a `purpose:` line summarising its role
 >
 > ```
@@ -212,7 +214,9 @@ new components, like your style of defining components very clear!
 >     - required by:
 >         - `Component`
 >     - operations (all `+`):
->         - `operationName(paramname: ParamType, ...): ReturnType` — inline note (UC refs, §E refs, behaviour)
+>         - `operationName(paramname: ParamType, ...): ReturnType` — UC ref / §E ref / short tag
+>             - effect: one-sentence description of what calling the operation does
+>             - returns: one-sentence description of the returned value (omit for void)
 >     - purpose: one-line explanation
 > ```
 
@@ -225,10 +229,17 @@ new interfaces
     - required by: external (physicians calling into the PMS)
     - operations (all `+`):
         - `consultPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus` — UC6
+            - effect: Returns the named patient's current status; SLA tier (2/5/10 s) is picked from the patient's risk level.
+            - returns: The patient's most recent status — risk level, supporting data, and timestamp.
         - `requestOnDemandConsultation(patientId: Datatypes.PatientId): Datatypes.ConsultationId†` — UC9; `ConsultationId` is the correlationId used to match the eventual result
+            - effect: Initiates an on-demand consultation — fetches fresh sensor data, launches a priority risk estimation, and returns an id the caller uses to correlate the eventual result.
+            - returns: The ConsultationId minted for this request, used to match the result notification back to the caller.
         - `configurePatientRiskAssessment(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7
+            - effect: Overwrites the per-patient ClinicalModelConfiguration and invalidates the clinical-model cache.
         - `updatePatientRiskLevel(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus)` — UC8
+            - effect: Updates the patient's risk level and forwards the change to the EHR via the HIS proxy.
         - `subscribeToNotifications(physicianId: Datatypes.PhysicianId†)` — UC5; lets the gateway deliver notifications back to this physician
+            - effect: Registers a physician to receive notifications about subsequent patient-status changes.
     - purpose: external physician-facing surface; thin façade routing UC5–UC9 commands and queries into the back-end services
 
 #### IPhysicianCommand
@@ -239,8 +250,12 @@ new interfaces
         - `PhysicianGateway`
     - operations (all `+`):
         - `configurePatientRiskAssessment(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7
+            - effect: Overwrites the per-patient ClinicalModelConfiguration and invalidates the clinical-model cache.
         - `updatePatientRiskLevel(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus)` — UC8
+            - effect: Updates the patient's risk level and forwards the change to the EHR via the HIS proxy.
         - `requestOnDemandConsultation(patientId: Datatypes.PatientId): Datatypes.ConsultationId†` — UC9
+            - effect: Initiates an on-demand consultation — fetches fresh sensor data, launches a priority risk estimation, and returns an id correlating the eventual result.
+            - returns: The ConsultationId minted for this request, used to match the result back to the caller.
     - purpose: physician write/command surface (UC7, UC8, UC9) consumed by PhysicianGateway
 
 #### IPatientQuery
@@ -251,6 +266,8 @@ new interfaces
         - `PhysicianGateway`
     - operations (all `+`):
         - `consultPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus` — UC6; the service picks the priority tier (high/med/low) from the patient's current risk level
+            - effect: Reads the patient's current status and dispatches the request to the priority tier matching the patient's risk level so the 2/5/10 s SLA holds under load.
+            - returns: The patient's most recent status.
     - purpose: physician read surface backing UC6 with tiered 2/5/10 s SLAs
 
 #### INotificationInbox
@@ -261,9 +278,14 @@ new interfaces
         - `PhysicianGateway`
     - operations (all `+`):
         - `subscribeToNotifications(physicianId: Datatypes.PhysicianId†)` — register a physician to receive notifications
+            - effect: Adds the physician to the recipient registry so future patient-status events fan out to them.
         - `unsubscribeFromNotifications(physicianId: Datatypes.PhysicianId†)`
+            - effect: Removes the physician from the recipient registry; notifications already queued are still delivered.
         - `getPendingNotifications(physicianId: Datatypes.PhysicianId†): List<Datatypes.Notification†>` — gateway pulls queued notifications for a physician (poll model; long-poll or websocket as an implementation choice). `Notification` carries a `NotificationSeverity†` (red/yellow/green).
+            - effect: Returns the physician's queued notifications in priority order (red > yellow > green) without removing them from the buffer.
+            - returns: The list of pending Notifications for the physician, ordered by severity then arrival.
         - `acknowledgeNotification(notificationId: Datatypes.NotificationId†)` — gateway confirms delivery so the dispatcher can drop it from its durable queue
+            - effect: Confirms delivery of the notification so the dispatcher can remove it from the priority buffer and the durable log.
     - purpose: notification inbox surface for the gateway; subscribe/unsubscribe, poll pending, and ack delivery
 
 #### IHISAccess
@@ -274,7 +296,10 @@ new interfaces
         - `EHRProxyModule` (UC16 reads, UC17 writes — sole consumer; UC8 writes route through PatientRecordMgmt for cache coherence)
     - operations (all `+`):
         - `getPatientRecord(patientId: Datatypes.PatientId): Datatypes.PatientRecord` — UC16; wraps the relevant `healthAPI` reads (getPatient / getObservation / getRiskAssessment)
+            - effect: Reads the patient's record from the external HIS by combining the relevant healthAPI reads into one record-level view.
+            - returns: The aggregated PatientRecord (demographics + observations + risk assessments per FHIR) retrieved from the HIS.
         - `updatePatientRecord(patientId: Datatypes.PatientId, record: Datatypes.PatientRecord)` — UC17; wraps the relevant `healthAPI` writes (savePatient / saveObservation / saveRiskAssessment)
+            - effect: Writes the patient record back to the HIS by dispatching the appropriate healthAPI save operations.
     - purpose: adapter façade over the external HIS healthAPI, exposing record-level read/write
 
 #### ClinicalConfigMgmt
@@ -285,6 +310,7 @@ new interfaces
         - `PhysicianCommandService` (UC7)
     - operations (all `+`):
         - `setClinicalModelConfigForPatient(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7; overwrites the per-patient config
+            - effect: Overwrites the per-patient ClinicalModelConfiguration in ClinicalModelDB; the caller is then expected to invalidate ClinicalModelCache.
     - purpose: write surface for per-patient ClinicalModelConfiguration (UC7), alongside the existing read-only ClinicalModelStorage on ClinicalModelDB
     - note: caller (PhysicianCommandService) must call `ClinicalModelCacheMgmt.invalidateCacheEntries(patientId)` after a successful write — the cache won't otherwise notice the change. Mirrors the legacy `OtherFunctionality → ClinicalModelCacheMgmt` invalidation edge.
 
@@ -297,7 +323,10 @@ new interfaces
         - `PhysicianCommandService` (UC9 result delivery)
     - operations (all `+`):
         - `subscribe(subscriberId: Datatypes.SubscriberId†, filter: Datatypes.FilterCriteria†): Datatypes.SubscriptionId†` — register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (NotificationDispatcher gets every event)
+            - effect: Registers a subscriber to receive RiskEvent payloads matching the filter; an empty filter receives every event.
+            - returns: A SubscriptionId the caller uses to unsubscribe later.
         - `unsubscribe(subscriptionId: Datatypes.SubscriptionId†)`
+            - effect: Removes the named subscription so no further RiskEvents are pushed to it.
     - purpose: push channel for patient-status risk events; consumed by NotificationDispatcher (UC5) and PhysicianCommandService (UC9 result delivery)
     - note: event payload delivered to subscribers is `RiskEvent†(PatientId, PatientStatus, Timestamp, CorrelationId†?)`. Fired by PatientStatusModule when `setEstimatedPatientStatus` actually changes the stored status.
 
@@ -309,6 +338,8 @@ new interfaces
         - `PatientQueryService`
     - operations (all `+`):
         - `getPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus` — cache-first read; on miss the cache falls back to `OtherDataMgmt.getPatientStatus` and populates itself
+            - effect: Cache-first read of the patient's status; on miss the cache fetches via OtherDataMgmt and populates itself for subsequent reads.
+            - returns: The patient's most recent status.
     - purpose: cache-first patient status read; miss-fallback into OtherDataMgmt
 
 #### IOnDemandSensorFetch
@@ -319,6 +350,8 @@ new interfaces
         - `PhysicianCommandService`
     - operations (all `+`):
         - `requestCurrentSensorData(patientId: Datatypes.PatientId, correlationId: Datatypes.CorrelationId†): Datatypes.SensorDataPackage` — synchronous with timeout sized inside the 3-min UC9 initiation budget
+            - effect: Synchronously asks the patient gateway to push the current sensor reading; bounded by the commander timeout sized inside the 3-min UC9 initiation budget.
+            - returns: The fresh SensorDataPackage supplied by the patient gateway for this UC9 request.
     - purpose: outbound on-demand sensor fetch from PMS to a patient gateway (UC9)
 
 existing interfaces reused verbatim from rationale PDF §E.3
@@ -333,8 +366,13 @@ existing interfaces reused verbatim from rationale PDF §E.3
         - `PhysicianCommandService` (UC9 — calls `addSensorData(..., triggerEstimation=false)` after gateway fetch)
     - operations (all `+`):
         - `addSensorData(patientId: Datatypes.PatientId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp, triggerEstimation: boolean = true)` — §E.3.23 plus the new optional `triggerEstimation` flag (default `true` preserves legacy behaviour; UC9 passes `false`)
+            - effect: Store the given sensor data and meta-data.
         - `getAllSensorDataOfPatient(patientId: Datatypes.PatientId): Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — §E.3.23 (Map instead of list)
+            - effect: This will fetch and return all sensor data belonging to the patient identified by patientId
+            - returns: A map of timestamps to SensorDataPackages covering the patient's full sensor history.
         - `getAllSensorDataOfPatientBefore(patientId: Datatypes.PatientId, before: Datatypes.Timestamp): Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — §E.3.23 (Map instead of list)
+            - effect: Fetch and return all sensor data belonging to the patient identified by patientId which was received before the specified time stopTime.
+            - returns: A map of timestamps to SensorDataPackages restricted to entries older than `before`.
     - purpose: append/query raw sensor data; ingest write path with optional trigger of the risk pipeline
 
 #### PatientRecordMgmt
@@ -346,7 +384,10 @@ existing interfaces reused verbatim from rationale PDF §E.3
         - `PhysicianCommandService` (UC8/UC17 writes via the new `updatePatientRecord` operation)
     - operations (all `+`):
         - `getPatientRecord(patientId: Datatypes.PatientId): Datatypes.PatientRecord` — §E.3.20; stale-tolerant cached read fronted by EHRProxyModule
+            - effect: This will fetch the EHR record of the patient with given id from the HIS and return it. If the HIS is not available, an older (cached) copy of the patient record is returned if possible.
+            - returns: The PatientRecord fronted by the EHR cache.
         - `updatePatientRecord(patientId: Datatypes.PatientId, record: Datatypes.PatientRecord)` — UC17 write (new op on §E.3.20); EHRProxyModule calls HISAdapter then invalidates its cache entry
+            - effect: Writes the patient record back to HIS via HISAdapter and invalidates the EHR cache entry so subsequent reads see the new value.
     - purpose: EHR-proxy surface for record reads (UC16) and writes (UC8 / UC17)
 
 #### OtherDataMgmt
@@ -361,7 +402,10 @@ existing interfaces reused verbatim from rationale PDF §E.3
         - `PatientStatusCache` (miss fallback)
     - operations (all `+`, both from §E.3.19, unchanged):
         - `getPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus`
+            - effect: Fetch and return the status of the patient identified by the patientId.
+            - returns: The patient's most recent persisted status.
         - `setEstimatedPatientStatus(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus, timestamp: Datatypes.Timestamp)` — fires `IRiskEvents` when the stored status actually changes
+            - effect: Update the patient status estimation of the patient identified by patientId to the given value estimatedStatus and update the time of estimation to estimationTime. The time of estimation is the time at which the corresponding estimation job for this patient was completed. If patient's estimated risk changed the appropriate parties are notified.
     - purpose: patient-status read/write; `setEstimatedPatientStatus` is the IRiskEvents emission point
 
 #### LaunchRiskEstimation
@@ -373,7 +417,10 @@ existing interfaces reused verbatim from rationale PDF §E.3
         - `PhysicianCommandService` (UC9 priority launch with correlationId)
     - operations (all `+`):
         - `launchRiskEstimation(patientId: Datatypes.PatientId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp, priority: Datatypes.Priority† = NORMAL, correlationId: Datatypes.CorrelationId†? = null)` — §E.3.11 plus two new optional parameters. `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets PhysicianCommandService match the eventual `IRiskEvents` event back to the originating UC9 request. Default values preserve legacy callers.
+            - effect: Submits a risk-estimation job for the patient against the supplied sensor data; the scheduler orders the job by `priority` (UC9 HIGH jumps ahead of scheduled jobs) and carries `correlationId` through to the resulting IRiskEvents event so subscribers can match it.
+            - effect(original value) : The RiskEstimationScheduler will fetch the clinical models and their configurations associated to the patient identified by patientId from storage using the ClinicalModelCache, notify the RiskEstimationCombiner of the different jobs that will be performed for a single risk estimation and schedule the individual jobs in its queue. In normal modus, queued jobs are returned in FIFO order. In overload modus, the system switches to dynamic priority: earliest deadline first and enqueues jobs of patient with a high risk level with an earlier deadline (2 instead of 5 minutes) to prioritize them over patients with lower risk levels. The SensorDataPackage newSensorData is passed because its arrival triggered the risk estimation. A risk level is estimated based on the computation of these clinical models. For the computation of the clinical models, the given sensor data newSensorData (which is the new sensor data that was received) is used and other required data is fetched  from the respective databases if needed. The given time-stamp receivedAt is used in order to avoid fetching the new sensor data from the database. This time-stamp represents the time at which the new sensor data was received.
     - purpose: scheduler entry point; extended with priority + correlationId for UC9 priority launches
+
 
 #### ClinicalModelCacheMgmt
 
@@ -383,6 +430,7 @@ existing interfaces reused verbatim from rationale PDF §E.3
         - `PhysicianCommandService` (UC7 config change → cache invalidation)
     - operations (`+`, unchanged from §E.3.3):
         - `invalidateCacheEntries(patientId: Datatypes.PatientId)` — removes all cached entries for a patient
+            - effect: The ClinicalModelCache will invalidate (i.e., remove) all items in its cache for the patient identified by patientId. If the cache does not contain any items for this patient, nothing is changed. After invalidating the cached items for a certain patient, the next request for them will lead to fetching them from the database and storing them in the cache again.
     - purpose: invalidate ClinicalModelCache entries after a per-patient config change (UC7)
 
 #### healthAPI
@@ -515,6 +563,7 @@ PhysicianCommandService — internal interfaces
         - `CommandRouter` (module of PhysicianCommandService)
     - operations (all `+`):
         - `configurePatientRiskAssessment(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7 delegation; mirrors the same op on IPhysicianCommand
+            - effect: Internal delegate — CommandRouter forwards the UC7 request to ConfigurationHandler, which writes the config and triggers the cache invalidation.
     - purpose: internal — CommandRouter → ConfigurationHandler delegation for UC7
 
 #### IRiskLevelCommand
@@ -525,6 +574,7 @@ PhysicianCommandService — internal interfaces
         - `CommandRouter` (module of PhysicianCommandService)
     - operations (all `+`):
         - `updatePatientRiskLevel(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus)` — UC8 delegation; mirrors the same op on IPhysicianCommand
+            - effect: Internal delegate — CommandRouter forwards the UC8 request to RiskLevelHandler, which writes the new risk level via PatientRecordMgmt.
     - purpose: internal — CommandRouter → RiskLevelHandler delegation for UC8
 
 #### IOnDemandCommand
@@ -535,6 +585,8 @@ PhysicianCommandService — internal interfaces
         - `CommandRouter` (module of PhysicianCommandService)
     - operations (all `+`):
         - `requestOnDemandConsultation(patientId: Datatypes.PatientId): Datatypes.ConsultationId†` — UC9 delegation; mirrors the same op on IPhysicianCommand
+            - effect: Internal delegate — CommandRouter forwards the UC9 request to OnDemandConsultationHandler, which mints a CorrelationId, fetches sensor data, launches a priority risk job, and awaits the matching event.
+            - returns: The ConsultationId minted for this UC9 request.
     - purpose: internal — CommandRouter → OnDemandConsultationHandler delegation for UC9
 
 #### ICorrelationTracking
@@ -545,7 +597,11 @@ PhysicianCommandService — internal interfaces
         - `OnDemandConsultationHandler` (module of PhysicianCommandService)
     - operations (all `+`):
         - `newCorrelationId(): Datatypes.CorrelationId†` — mints a fresh CorrelationId and records it as pending
+            - effect: Mints a fresh CorrelationId and records it in the pending set so a future IRiskEvents can be matched back to this UC9 request.
+            - returns: The freshly minted CorrelationId.
         - `consumeCorrelation(correlationId: Datatypes.CorrelationId†): boolean` — returns true if the CorrelationId was pending (and removes it); called by OnDemandConsultationHandler when an IRiskEvents arrives, to decide whether the event matches a pending UC9
+            - effect: Resolves a CorrelationId by removing it from the pending set if present; reports whether the event matches a tracked UC9 request.
+            - returns: True if the CorrelationId was pending (and has now been consumed); false otherwise.
     - purpose: internal — CorrelationId minting and matching for UC9 result delivery (Av2 failover state lives here per §7 point #1)
 
 NotificationDispatcher — internal interfaces
@@ -559,8 +615,12 @@ NotificationDispatcher — internal interfaces
         - `NotificationInboxModule` (module of NotificationDispatcher; read side — peek/remove)
     - operations (all `+`):
         - `enqueue(physicianId: Datatypes.PhysicianId†, notification: Datatypes.Notification†)` — adds a pending notification for a specific physician; severity drives priority + drop-green-first overload policy (Response measure 5)
+            - effect: Adds the notification to the physician's pending set; severity drives priority ordering and the drop-green-first policy when the 100/min threshold is exceeded.
         - `peekPending(physicianId: Datatypes.PhysicianId†): List<Datatypes.Notification†>` — returns pending notifications for a physician, in priority order; called from getPendingNotifications
+            - effect: Returns the physician's pending notifications in priority order (red > yellow > green) without removing them from the buffer.
+            - returns: The list of pending Notifications for the physician, ordered by severity then arrival.
         - `removePending(notificationId: Datatypes.NotificationId†)` — removes a notification after the physician acks it via INotificationInbox.acknowledgeNotification
+            - effect: Removes the notification from the buffer after the physician acks it through INotificationInbox.
     - purpose: internal — priority-ordered notification buffer (red > yellow > green) with drop-green-first overload policy
 
 #### INotificationLog
@@ -572,8 +632,12 @@ NotificationDispatcher — internal interfaces
         - `NotificationInboxModule` (module of NotificationDispatcher; mark delivered + recover on startup)
     - operations (all `+`):
         - `persist(notification: Datatypes.Notification†)` — write-ahead log entry for red/yellow notifications before they enter the buffer; survives a crash
+            - effect: Writes the notification to the durable log before it enters the in-memory buffer so a crash cannot lose a red or yellow notification.
         - `markDelivered(notificationId: Datatypes.NotificationId†)` — removes from log after physician ack so storage doesn't grow unbounded
+            - effect: Removes the notification from the durable log once the physician has acked delivery, bounding storage growth.
         - `recoverPending(): List<Datatypes.Notification†>` — on startup, returns notifications that were persisted but never acked; NotificationInboxModule replays them into the buffer
+            - effect: On startup, returns notifications that were persisted but never acked so NotificationInboxModule can replay them into the priority buffer.
+            - returns: The list of unacked Notifications recovered from the durable log.
     - purpose: internal — durable write-ahead log so red/yellow notifications survive a crash (Response measure 5)
 
 #### IRecipientRegistry
@@ -585,8 +649,12 @@ NotificationDispatcher — internal interfaces
         - `RiskEventSubscriber` (module of NotificationDispatcher; UC5 recipient lookup on each event)
     - operations (all `+`):
         - `subscribe(physicianId: Datatypes.PhysicianId†)` — register a physician to receive notifications
+            - effect: Adds the physician to the notification recipient set.
         - `unsubscribe(physicianId: Datatypes.PhysicianId†)` — remove a physician
+            - effect: Removes the physician from the notification recipient set.
         - `findRecipients(patientId: Datatypes.PatientId): List<Datatypes.PhysicianId†>` — UC5 lookup; returns the physicians who should be notified about events for this patient. The mapping rule (which physicians watch which patient) is not yet specified — see §6 OQ1 follow-up.
+            - effect: Looks up the physicians who should be notified about events for the patient; backs UC5 recipient resolution.
+            - returns: The list of PhysicianIds subscribed to events for this patient.
     - purpose: internal — physician↔patient subscription registry used for UC5 recipient lookup
 
 ### 2e. Deployment changes
