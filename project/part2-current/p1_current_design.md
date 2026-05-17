@@ -98,74 +98,149 @@ new components, like your style of defining components very clear!
     - description: single external entry point for physicians; thin router with no business logic.
     - node: PhysicianAccessNode
     - provides:
-        - `IPhysicianAPI`
+        - `IPhysicianAPI` OK
     - requires:
-        - `IPhysicianCommand`
-        - `IPatientQuery`
-        - `INotificationInbox`
+        - `IPhysicianCommand` OK
+        - `IPatientQuery` OK
+        - `INotificationInbox` OK
 - `PhysicianCommandService`
     - description: handles physician write/command flows: UC7 (configure risk assessment), UC8 (update risk level), UC9 (on-demand consultation).
     - node: PhysicianAccessNode
     - provides:
-        - `IPhysicianCommand`
+        - `IPhysicianCommand` OK
     - requires:
-        - `PatientRecordMgmt` (UC8 EHR write — routes via EHRProxyModule for cache coherence)
-        - `ClinicalConfigMgmt` (UC7 write — new interface on ClinicalModelDB)
-        - `IRiskEvents` (UC9 result delivery)
-        - `LaunchRiskEstimation` (UC9 priority launch with correlation)
-        - `ClinicalModelCacheMgmt` (UC7 invalidation after the config write)
-        - `IOnDemandSensorFetch` (UC9 gateway fetch)
-        - `SensorDataMgmt` (UC9 store fetched data with triggerEstimation=false)  <!-- [claude] renamed IClinicalConfigWrite → ClinicalConfigMgmt to match §E.3 naming convention (no I-prefix, <thing>Mgmt). Dropped IHISAccess: UC17 writes now flow via PatientRecordMgmt → EHRProxyModule → HISAdapter so the cache is invalidated structurally. Added IOnDemandSensorFetch + SensorDataMgmt to close the UC9 gateway-fetch gap. -->
+        - `PatientRecordMgmt` OK (UC8 EHR write — routes via EHRProxyModule for cache coherence)
+        - `ClinicalConfigMgmt` OK (UC7 write — new interface on ClinicalModelDB)
+        - `IRiskEvents` OK (UC9 result delivery)
+        - `LaunchRiskEstimation` OK (UC9 priority launch with correlation)
+        - `ClinicalModelCacheMgmt` OK (UC7 invalidation after the config write)
+        - `IOnDemandSensorFetch` OK (UC9 gateway fetch)
+        - `SensorDataMgmt` OK (UC9 store fetched data with triggerEstimation=false)  <!-- [claude] renamed IClinicalConfigWrite → ClinicalConfigMgmt to match §E.3 naming convention (no I-prefix, <thing>Mgmt). Dropped IHISAccess: UC17 writes now flow via PatientRecordMgmt → EHRProxyModule → HISAdapter so the cache is invalidated structurally. Added IOnDemandSensorFetch + SensorDataMgmt to close the UC9 gateway-fetch gap. -->
+    - `decomposed` into modules (decomposition view — Conv. 5):  <!-- [claude] -->
+        - `CommandRouter`
+            - description: provides IPhysicianCommand at the component boundary; thin dispatcher that routes each operation to the matching handler.
+            - provides:
+                - `IPhysicianCommand`
+            - requires:
+                - `IConfigCommand` (internal — UC7 → ConfigurationHandler)
+                - `IRiskLevelCommand` (internal — UC8 → RiskLevelHandler)
+                - `IOnDemandCommand` (internal — UC9 → OnDemandConsultationHandler)
+        - `ConfigurationHandler`
+            - description: UC7 — overwrites the per-patient ClinicalModelConfiguration, then invalidates the clinical-model cache.
+            - provides:
+                - `IConfigCommand` (internal to PhysicianCommandService; consumed by CommandRouter)
+            - requires:
+                - `ClinicalConfigMgmt`
+                - `ClinicalModelCacheMgmt`
+        - `RiskLevelHandler`
+            - description: UC8 — writes the updated risk level via PatientRecordMgmt; the EHR forward is structural through EHRProxyModule.
+            - provides:
+                - `IRiskLevelCommand` (internal to PhysicianCommandService; consumed by CommandRouter)
+            - requires:
+                - `PatientRecordMgmt`
+        - `OnDemandConsultationHandler`
+            - description: UC9 orchestration — mints a CorrelationId via CorrelationTracker, fetches sensor data, stores it with `triggerEstimation=false`, launches a priority risk job carrying the CorrelationId, then waits for the matching IRiskEvents.
+            - provides:
+                - `IOnDemandCommand` (internal to PhysicianCommandService; consumed by CommandRouter)
+            - requires:
+                - `ICorrelationTracking` (internal — mints + resolves CorrelationIds)
+                - `IOnDemandSensorFetch`
+                - `SensorDataMgmt`
+                - `LaunchRiskEstimation`
+                - `IRiskEvents`
+        - `CorrelationTracker`  <!-- [claude] makes §7 point #1 structural — Av2 must preserve this state across failover -->
+            - description: mints CorrelationIds for UC9 requests and matches incoming RiskEvents back to the originating handler; the single locus an Av2 failover must preserve so UC9 result delivery survives.
+            - provides:
+                - `ICorrelationTracking` (internal to PhysicianCommandService; consumed by OnDemandConsultationHandler)
+            - requires:
+                - (none)
 - `PatientQueryService`
     - description: handles UC6 patient-status reads; tiered priority queue (high > medium > low) feeds the 2/5/10 s SLA tiers.
     - node: PhysicianAccessNode
     - provides:
-        - `IPatientQuery`
+        - `IPatientQuery` OK
     - requires:
-        - `IPatientStatusRead`
+        - `IPatientStatusRead` OK
 - `PatientStatusCache`  <!-- [claude] new -->
     - description: read-through cache for patient status; pins high-risk patients to bound cross-node traffic.
     - node: PhysicianAccessNode
     - provides:
-        - `IPatientStatusRead`
+        - `IPatientStatusRead` OK
     - requires:
-        - `OtherDataMgmt` (miss fallback + invalidation; reuses the existing patient-status interface per §E.3.19)
+        - `OtherDataMgmt` OK (miss fallback + invalidation; reuses the existing patient-status interface per §E.3.19)
 - `NotificationDispatcher`
     - description: UC5 dispatcher; subscribes to IRiskEvents; red > yellow > green priority queue; drops green first under overload; persists red/yellow so they cannot be lost.
     - node: PhysicianAccessNode
     - provides:
-        - `INotificationInbox`
+        - `INotificationInbox` OK
     - requires:
-        - `IRiskEvents`
-- `PatientGatewayCommander`  <!-- [claude] new — closes UC9 gateway-fetch gap. Treats the patient gateway as an external system (same pattern as HISAdapter for HIS). -->
+        - `IRiskEvents` OK
+    - `decomposed` into modules (decomposition view — Conv. 5):  <!-- [claude] -->
+        - `NotificationInboxModule`
+            - description: provides INotificationInbox at the component boundary; owns per-physician subscription state and the pull surface used by PhysicianGateway (getPendingNotifications / acknowledgeNotification).
+            - provides:
+                - `INotificationInbox`
+            - requires:
+                - `IPriorityBuffer` (internal — peek/remove pending notifications for a physician)
+                - `INotificationLog` (internal — recover unacked red/yellow on startup; mark delivered after ack)
+                - `IRecipientRegistry` (internal — record subscribe/unsubscribe)
+        - `PriorityBuffer`  <!-- [claude] Response measure 5 + sensitivity #3 -->
+            - description: in-memory priority queue (red > yellow > green); enforces the 100/min threshold and drops green first under overload.
+            - provides:
+                - `IPriorityBuffer` (internal to NotificationDispatcher; written by RiskEventSubscriber, read by NotificationInboxModule)
+            - requires:
+                - (none)
+        - `DurableNotificationLog`  <!-- [claude] Response measure 5 "may not be lost" + Av2 seam §7 point #3 -->
+            - description: write-ahead log; red and yellow notifications are persisted here before being acked from IRiskEvents so they survive a crash.
+            - provides:
+                - `INotificationLog` (internal to NotificationDispatcher; written by RiskEventSubscriber, read by NotificationInboxModule on recovery)
+            - requires:
+                - (none)
+        - `RecipientRegistry`  <!-- [claude] resolves OQ1 — registry lives here as a module, not a separate component -->
+            - description: maps a patient-status event to the physicians who should be notified about it; UC5's "looks up the appropriate recipients" lives here. Populated via subscribeToNotifications on INotificationInbox.
+            - provides:
+                - `IRecipientRegistry` (internal to NotificationDispatcher; queried by RiskEventSubscriber, written by NotificationInboxModule on subscribe/unsubscribe)
+            - requires:
+                - (none)
+        - `RiskEventSubscriber`  <!-- [claude] required-interface owner per Conv. 4; preserves §7 point #2's emission-point contract -->
+            - description: requires IRiskEvents at the component boundary; on event, queries RecipientRegistry, persists red/yellow to DurableNotificationLog, then enqueues to PriorityBuffer.
+            - provides:
+                - (none — reacts to IRiskEvents push; no inbound calls from siblings)
+            - requires:
+                - `IRiskEvents`
+                - `IRecipientRegistry` (internal — UC5 recipient lookup)
+                - `INotificationLog` (internal — persist red/yellow before enqueue)
+                - `IPriorityBuffer` (internal — enqueue for dispatch)
+- `PatientGatewayCommander`  <!-- [claude] new — closes UC9 gateway-fetch gap. Treats the patient gateway as an external system (same pattern as HISAdapter for HIS). THIS HAS TO BE OVERLAPPING WITH AV2 TEAM SAME THING-->
     - description: outbound channel from PMS to patient gateways for UC9 on-demand sensor-data fetches; synchronous with a bounded timeout.
     - node: PhysicianAccessNode
     - provides:
-        - `IOnDemandSensorFetch`
+        - `IOnDemandSensorFetch` OK
     - requires:
-        - `patientGatewayAPI` (external interface exposed by the patient gateway; new — see §6 OQ4 for auth model)
+        - `patientGatewayAPI` OK (external interface exposed by the patient gateway; new — see §6 OQ4 for auth model)
 - `HISAdapter`
     - description: outbound adapter for the external HIS healthAPI; used by EHRProxyModule for UC16 reads and UC17 writes.
     - node: PatientDataNode  <!-- [claude] kept on PatientDataNode: co-located with EHRProxyModule, which fronts every HIS call. PhysicianCommandService's UC8 write reaches HIS via PatientRecordMgmt.updatePatientRecord (one cross-node hop), same network cost as the previous direct-HISAdapter design but with structural cache coherence. -->
     - provides: 
-        - `IHISAccess`
+        - `IHISAccess` OK
     - requires:
-        - `healthAPI`
-- `PatientDataService`  <!-- [claude] new — replaces OtherFunctionality -->
+        - `healthAPI` OK
+- `PatientDataService`  <!-- [claude] new — replaces OtherFunctionality HAS TO BE OVERLAPPING WITH OTHER TEAM AV2 SAME THING-->
     - description: owns raw sensor data, patient status, and the HIS EHR proxy; takes over the three interfaces OtherFunctionality exposed.
     - node:
         - `PatientDataNode`
     - provides:
-        - `SensorDataMgmt`
-        - `OtherDataMgmt`
-        - `PatientRecordMgmt`
-        - `IRiskEvents`
+        - `SensorDataMgmt` OK
+        - `OtherDataMgmt` OK
+        - `PatientRecordMgmt` OK 
+        - `IRiskEvents` OK
         <!-- [claude] IRiskEvents now provided here (not by RiskEstimationCombiner) — fired internally when setEstimatedPatientStatus actually changes status, matching the existing OtherFunctionality contract ("appropriate parties are notified") -->
     - requires:
-        - `LaunchRiskEstimation`
-        - `IHISAccess`
+        - `LaunchRiskEstimation` OK
+        - `IHISAccess` OK
         <!-- [claude] IHISAccess required by EHRProxyModule because PatientRecordMgmt is a HIS proxy per §E.3.20. Dropped ClinicalModelCacheMgmt: that edge belonged to the UC7 write path, now owned by PhysicianCommandService (see PatientStatusModule note). -->
     - `decomposed` into modules (decomposition view — Conv. 5):
+        - **no internal interfaces** — the three modules are parallel (independent responsibilities, each tied to its own data store: sensor data, patient status, EHR cache); all collaboration is at the component boundary, so the decomposition diagram has no ball-and-socket connections between modules. Contrast with PhysicianCommandService and NotificationDispatcher decompositions, where modules collaborate internally.  <!-- [claude] -->
         - `SensorIngestModule`
             - description: accepts and persists raw sensor data; triggers risk estimation unless caller opts out via `triggerEstimation=false` (used by UC9).  <!-- [claude] addSensorData gains an optional triggerEstimation flag (defaults to true); avoids redundant risk jobs on UC9 data. See §6 OQ5. -->
             - provides:
@@ -207,41 +282,41 @@ new interfaces, like you style of displaying the interface keep it like this!
     - provided by: PhysicianGateway
     - required by: external (physicians calling into the PMS)
     - operations (all `+`):
-        - `consultPatientStatus(PatientId) → PatientStatus` — UC6
-        - `requestOnDemandConsultation(PatientId) → ConsultationId†` — UC9; `ConsultationId` is the correlationId used to match the eventual result
-        - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — UC7
-        - `updatePatientRiskLevel(PatientId, PatientStatus)` — UC8ccc
-        - `subscribeToNotifications(PhysicianId†)` — UC5; lets the gateway deliver notifications back to this physician
+        - `consultPatientStatus(PatientId) → PatientStatus` — OK UC6
+        - `requestOnDemandConsultation(PatientId) → ConsultationId†` — OK UC9; `ConsultationId` is the correlationId used to match the eventual result
+        - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — OK UC7
+        - `updatePatientRiskLevel(PatientId, PatientStatus)` — OK  UC8
+        - `subscribeToNotifications(PhysicianId†)` — OK UC5; lets the gateway deliver notifications back to this physician
 - `IPhysicianCommand`
     - provided by: `PhysicianCommandService`
     - required by:
         - `PhysicianGateway`
     - operations (all `+`):
-        - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — UC7
-        - `updatePatientRiskLevel(PatientId, PatientStatus)` — UC8
+        - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — OK UC7
+        - `updatePatientRiskLevel(PatientId, PatientStatus)` — OK UC8
         - `requestOnDemandConsultation(PatientId) → ConsultationId†` — UC9
 - `IPatientQuery`
     - provided by: `PatientQueryService`
     - required by:
         - `PhysicianGateway`
     - operations (all `+`):
-        - `consultPatientStatus(PatientId) → PatientStatus` — UC6; the service picks the priority tier (high/med/low) from the patient's current risk level
+        - `consultPatientStatus(PatientId) → PatientStatus` — OK UC6; the service picks the priority tier (high/med/low) from the patient's current risk level
 - `INotificationInbox`
     - provided by: `NotificationDispatcher`
     - required by:
         - `PhysicianGateway`
     - operations (all `+`):
         - `subscribeToNotifications(PhysicianId†)` — register a physician to receive notifications
-        - `unsubscribeFromNotifications(PhysicianId)`
-        - `getPendingNotifications(PhysicianId) → List<Notification†>` — gateway pulls queued notifications for a physician (poll model; long-poll or websocket as an implementation choice). `Notification` carries a `NotificationSeverity†` (red/yellow/green).
+        - `unsubscribeFromNotifications(PhysicianId)` OK
+        - `getPendingNotifications(PhysicianId) → List<Notification†>` — OK gateway pulls queued notifications for a physician (poll model; long-poll or websocket as an implementation choice). `Notification` carries a `NotificationSeverity†` (red/yellow/green).
         - `acknowledgeNotification(NotificationId†)` — gateway confirms delivery so the dispatcher can drop it from its durable queue
 - `IHISAccess`
     - provided by: `HISAdapter`
     - required by:
         - `EHRProxyModule` (UC16 reads, UC17 writes)  <!-- [claude] dropped PhysicianCommandService too — UC8 writes now route through PatientRecordMgmt for cache coherence. EHRProxyModule is the sole consumer of IHISAccess. -->
     - operations (all `+`):
-        - `getPatientRecord(PatientId) → PatientRecord` — UC16; wraps the relevant `healthAPI` reads (getPatient / getObservation / getRiskAssessment)
-        - `updatePatientRecord(PatientId, PatientRecord)` — UC17; wraps the relevant `healthAPI` writes (savePatient / saveObservation / saveRiskAssessment)
+        - `getPatientRecord(PatientId) → PatientRecord` — OK UC16; wraps the relevant `healthAPI` reads (getPatient / getObservation / getRiskAssessment)
+        - `updatePatientRecord(PatientId, PatientRecord)` — OK UC17; wraps the relevant `healthAPI` writes (savePatient / saveObservation / saveRiskAssessment)
 - `ClinicalConfigMgmt`  <!-- [claude] new interface added to ClinicalModelDB. Per-patient risk-assessment configs live in ClinicalModelDB per §E.1.3 ("stores all the ClinicalModels and the configurations of these ClinicalModels for the different patients"), but §E.3 only defined a *read* surface (ClinicalModelStorage). UC7 needs a write — this is that interface. Sibling to ClinicalModelStorage, not a replacement: ClinicalModelCache still sockets onto the read-only ClinicalModelStorage so it doesn't accidentally gain write access. -->
     - provided by: `ClinicalModelDB` (new interface alongside the existing ClinicalModelStorage)
     - required by:
@@ -255,7 +330,7 @@ new interfaces, like you style of displaying the interface keep it like this!
         - `NotificationDispatcher` (UC5 notify)
         - `PhysicianCommandService` (UC9 result delivery)
     - operations (all `+`):
-        - `subscribe(SubscriberId†, FilterCriteria†) → SubscriptionId†` — register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (NotificationDispatcher gets every event)
+        - `subscribe(SubscriberId†, FilterCriteria†) → SubscriptionId†` — OK register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (NotificationDispatcher gets every event)
         - `unsubscribe(SubscriptionId)`
     - note: event payload delivered to subscribers is `RiskEvent†(PatientId, PatientStatus, Timestamp, CorrelationId†?)`. Fired by PatientStatusModule when `setEstimatedPatientStatus` actually changes the stored status.
 - `IPatientStatusRead`  <!-- [claude] new -->
@@ -263,15 +338,75 @@ new interfaces, like you style of displaying the interface keep it like this!
     - required by:
         - `PatientQueryService`
     - operations (all `+`):
-        - `getPatientStatus(PatientId) → PatientStatus` — cache-first read; on miss the cache falls back to `OtherDataMgmt.getPatientStatus` and populates itself
+        - `getPatientStatus(PatientId) → PatientStatus` — OK cache-first read; on miss the cache falls back to `OtherDataMgmt.getPatientStatus` and populates itself
 - `IOnDemandSensorFetch`  <!-- [claude] new — closes UC9 gateway-fetch gap -->
     - provided by: `PatientGatewayCommander`
     - required by:
         - `PhysicianCommandService`
     - operations (all `+`):
-        - `requestCurrentSensorData(PatientId, CorrelationId†) → SensorDataPackage` — synchronous with timeout sized inside the 3-min UC9 initiation budget
+        - `requestCurrentSensorData(PatientId, CorrelationId†) → SensorDataPackage` — OK synchronous with timeout sized inside the 3-min UC9 initiation budget
 
 <!-- [claude] IPatientRecord dropped — was based on the wrong assumption that we needed a new interface for the cache miss path. The cache reuses the existing OtherDataMgmt instead (§E.3.19). See the existing-interfaces section below. -->
+
+internal interfaces (decomposition views only — do NOT appear on the C&C diagram)  <!-- [claude] each module-to-module call in a decomposition view needs a backing required interface per Conv. 3 and Conv. 6. Grouped below by parent component. -->
+
+PhysicianCommandService — internal interfaces:
+
+- `IConfigCommand`  <!-- [claude] new — internal -->
+    - provided by: `ConfigurationHandler` (module of PhysicianCommandService)
+    - required by:
+        - `CommandRouter` (module of PhysicianCommandService)
+    - operations (all `+`):
+        - `configurePatientRiskAssessment(PatientId, ClinicalModelConfiguration)` — UC7 delegation; mirrors the same op on IPhysicianCommand
+- `IRiskLevelCommand`  <!-- [claude] new — internal -->
+    - provided by: `RiskLevelHandler` (module of PhysicianCommandService)
+    - required by:
+        - `CommandRouter` (module of PhysicianCommandService)
+    - operations (all `+`):
+        - `updatePatientRiskLevel(PatientId, PatientStatus)` — UC8 delegation; mirrors the same op on IPhysicianCommand
+- `IOnDemandCommand`  <!-- [claude] new — internal -->
+    - provided by: `OnDemandConsultationHandler` (module of PhysicianCommandService)
+    - required by:
+        - `CommandRouter` (module of PhysicianCommandService)
+    - operations (all `+`):
+        - `requestOnDemandConsultation(PatientId) → ConsultationId†` — UC9 delegation; mirrors the same op on IPhysicianCommand
+- `ICorrelationTracking`  <!-- [claude] new — internal; makes §7 point #1 (Av2 failover state) structural -->
+    - provided by: `CorrelationTracker` (module of PhysicianCommandService)
+    - required by:
+        - `OnDemandConsultationHandler` (module of PhysicianCommandService)
+    - operations (all `+`):
+        - `newCorrelationId() → CorrelationId†` — mints a fresh CorrelationId and records it as pending
+        - `consumeCorrelation(CorrelationId) → boolean` — returns true if the CorrelationId was pending (and removes it); called by OnDemandConsultationHandler when an IRiskEvents arrives, to decide whether the event matches a pending UC9
+
+NotificationDispatcher — internal interfaces:
+
+- `IPriorityBuffer`  <!-- [claude] new — internal -->
+    - provided by: `PriorityBuffer` (module of NotificationDispatcher)
+    - required by:
+        - `RiskEventSubscriber` (module of NotificationDispatcher; write side — enqueue)
+        - `NotificationInboxModule` (module of NotificationDispatcher; read side — peek/remove)
+    - operations (all `+`):
+        - `enqueue(PhysicianId†, Notification†)` — adds a pending notification for a specific physician; severity drives priority + drop-green-first overload policy (Response measure 5)
+        - `peekPending(PhysicianId†) → List<Notification†>` — returns pending notifications for a physician, in priority order; called from getPendingNotifications
+        - `removePending(NotificationId†)` — removes a notification after the physician acks it via INotificationInbox.acknowledgeNotification
+- `INotificationLog`  <!-- [claude] new — internal; backs Response measure 5 "may not be lost" -->
+    - provided by: `DurableNotificationLog` (module of NotificationDispatcher)
+    - required by:
+        - `RiskEventSubscriber` (module of NotificationDispatcher; persist before enqueue)
+        - `NotificationInboxModule` (module of NotificationDispatcher; mark delivered + recover on startup)
+    - operations (all `+`):
+        - `persist(Notification†)` — write-ahead log entry for red/yellow notifications before they enter the buffer; survives a crash
+        - `markDelivered(NotificationId†)` — removes from log after physician ack so storage doesn't grow unbounded
+        - `recoverPending() → List<Notification†>` — on startup, returns notifications that were persisted but never acked; NotificationInboxModule replays them into the buffer
+- `IRecipientRegistry`  <!-- [claude] new — internal; resolves OQ1 structurally -->
+    - provided by: `RecipientRegistry` (module of NotificationDispatcher)
+    - required by:
+        - `NotificationInboxModule` (module of NotificationDispatcher; subscribe/unsubscribe writes from INotificationInbox)
+        - `RiskEventSubscriber` (module of NotificationDispatcher; UC5 recipient lookup on each event)
+    - operations (all `+`):
+        - `subscribe(PhysicianId†)` — register a physician to receive notifications
+        - `unsubscribe(PhysicianId†)` — remove a physician
+        - `findRecipients(PatientId) → List<PhysicianId†>` — UC5 lookup; returns the physicians who should be notified about events for this patient. The mapping rule (which physicians watch which patient) is not yet specified — see §6 OQ1 follow-up.
 
 
 existing interfaces reused verbatim from rationale PDF §E.3 <!-- [claude] verify names against §E.3 before VP entry; Conv. 1 -->
@@ -283,16 +418,16 @@ existing interfaces reused verbatim from rationale PDF §E.3 <!-- [claude] verif
         - `RiskEstimationScheduler` (per §E.3.23)
         - `PhysicianCommandService` (UC9 — calls `addSensorData(..., triggerEstimation=false)` after gateway fetch)  <!-- [claude] added RiskEstimationScheduler (was missing — see §E.3.23) and PhysicianCommandService (new UC9 path). -->
     - operations (all `+`):
-        - `addSensorData(PatientId, SensorDataPackage, Timestamp, triggerEstimation: Boolean = true)` — §E.3.23 plus the new optional `triggerEstimation` flag (default `true` preserves legacy behaviour; UC9 passes `false`)  <!-- [claude] §E.3.23 baseline + extension flag from §6 OQ5 -->
-        - `getAllSensorDataOfPatient(PatientId) → List<Tuple<SensorDataPackage, Timestamp>>` — §E.3.23
-        - `getAllSensorDataOfPatientBefore(PatientId, Timestamp) → List<Tuple<SensorDataPackage, Timestamp>>` — §E.3.23
+        - `addSensorData(PatientId, SensorDataPackage, Timestamp, triggerEstimation: Boolean = true)` — §E.3.23 plus the new optional `triggerEstimation` flag (default `true` preserves legacy behaviour; UC9 passes `false`) TODO make this triggerEstimation var  <!-- [claude] §E.3.23 baseline + extension flag from §6 OQ5 -->
+        - `getAllSensorDataOfPatient(PatientId) → Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — OK (Map instead of list) §E.3.23
+        - `getAllSensorDataOfPatientBefore(PatientId, Timestamp) → Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` —  OK (Map instead of list) §E.3.23
 - `PatientRecordMgmt`
     - provided by: `PatientDataService` (was OtherFunctionality)
     - required by:
         - `RiskEstimationCombiner` (UC16 reads per §E.3.20), PhysicianCommandService (UC8/UC17 writes via the new `updatePatientRecord` operation)  <!-- [claude] interface extended: PatientRecordMgmt now exposes `getPatientRecord` (existing, §E.3.20) + `updatePatientRecord` (new, for UC17). EHRProxyModule invalidates its cache on write. -->
     - operations (all `+`):
-        - `getPatientRecord(PatientId) → PatientRecord` — §E.3.20; stale-tolerant cached read fronted by EHRProxyModule
-        - `updatePatientRecord(PatientId, PatientRecord)` — UC17 write; EHRProxyModule calls HISAdapter then invalidates its cache entry  <!-- [claude] new operation added to §E.3.20 -->
+        - `getPatientRecord(PatientId) → PatientRecord` — OK §E.3.20; stale-tolerant cached read fronted by EHRProxyModule
+        - `updatePatientRecord(PatientId, PatientRecord)` — OK UC17 write; EHRProxyModule calls HISAdapter then invalidates its cache entry  <!-- [claude] new operation added to §E.3.20 -->
 - `OtherDataMgmt`
     - provided by: `PatientDataService` (was OtherFunctionality)
     - required by:
@@ -302,26 +437,26 @@ existing interfaces reused verbatim from rationale PDF §E.3 <!-- [claude] verif
         - `RiskEstimationScheduler` (per §E.3.19)
         - `PatientStatusCache` (miss fallback)  <!-- [claude] added RiskEstimationCombiner and RiskEstimationScheduler (were missing — see §E.3.19) and PatientStatusCache (used for cache misses). -->
     - operations (all `+`, both from §E.3.19, unchanged):
-        - `getPatientStatus(PatientId) → PatientStatus`
-        - `setEstimatedPatientStatus(PatientId, PatientStatus, Timestamp)` — fires `IRiskEvents` when the stored status actually changes
+        - `getPatientStatus(PatientId) → PatientStatus` OK
+        - `setEstimatedPatientStatus(PatientId, PatientStatus, Timestamp)` — OK fires `IRiskEvents` when the stored status actually changes
 - `LaunchRiskEstimation`
     - provided by: `RiskEstimationScheduler` (extended — gains a priority/correlation parameter so UC9 jobs can jump ahead of scheduled ones; coordinate with teammate on Av2 since this touches their scheduler surface)
     - required by:
         - `PatientDataService`.SensorIngestModule
         - `PhysicianCommandService` (UC9 priority launch with correlationId)
     - operations (all `+`):
-        - `launchRiskEstimation(PatientId, SensorDataPackage, Timestamp, priority: Priority† = NORMAL, correlationId: CorrelationId†? = null)` — §E.3.11 plus two new optional parameters. `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets PhysicianCommandService match the eventual `IRiskEvents` event back to the originating UC9 request. Default values preserve legacy callers.  <!-- [claude] extension flagged in §7 — needs teammate sign-off on the priority lattice -->
+        - `launchRiskEstimation(PatientId, SensorDataPackage, Timestamp, priority: Priority† = NORMAL, correlationId: CorrelationId†? = null)` — OK §E.3.11 plus two new optional parameters. `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets PhysicianCommandService match the eventual `IRiskEvents` event back to the originating UC9 request. Default values preserve legacy callers.  <!-- [claude] extension flagged in §7 — needs teammate sign-off on the priority lattice -->
 - `ClinicalModelCacheMgmt`
     - provided by: `ClinicalModelCache` (unchanged)
     - required by:
         - `PhysicianCommandService` (UC7 config change → cache invalidation)
     - operations (`+`, unchanged from §E.3.3):
-        - `invalidateCacheEntries(PatientId)` — removes all cached entries for a patient
+        - `invalidateCacheEntries(PatientId)` — OK removes all cached entries for a patient
 - `healthAPI`
     - provided by: `HIS` (external to eHealthPlatform, unchanged)
     - required by:
         - `HISAdapter`
-    - operations: unchanged from §E.3.8 (FHIR-derived: `getObservation`, `getPatient`, `getRiskAssessment`, `saveObservation`, `savePatient`, `saveRiskAssessment`, `deleteObservation`, `deletePatient`, `deleteRiskAssessment`, `searchObservation`, `searchPatient`, `searchRiskAssessment`). Signatures live in §E.3.8 — not reproduced here since P1 doesn't change them.
+    - operations: unchanged from §E.3.8 (FHIR-derived: `getObservation`, `getPatient`, `getRiskAssessment`, `saveObservation`, `savePatient`, `saveRiskAssessment`, `deleteObservation`, `deletePatient`, `deleteRiskAssessment`, `searchObservation`, `searchPatient`, `searchRiskAssessment`). Signatures live in §E.3.8 —  OK not reproduced here since P1 doesn't change them.
 
 removed from earlier draft  <!-- [claude] -->
 
