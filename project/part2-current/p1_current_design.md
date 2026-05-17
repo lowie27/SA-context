@@ -83,11 +83,13 @@ i like this suggestions
 **VP entry rules — components get descriptions, interfaces get operations.**
 
 - **Components** (§2a) need a **description** only — one short, concise sentence (≤ ~20 words) in VP's General tab. The `description:` line under each component is the source — paste it into VP. No operations on the component itself.
-- **Interfaces** (§2b) need **operations**. For each operation, fill in four fields in VP:
+- **Interfaces** (§2b) need **operations**. For each operation, fill in these fields in VP:
     - **name** — e.g. `getPatientStatus`
     - **classifier** — the type of each parameter, prefixed with `Datatypes.`, e.g. `Datatypes.PatientId`, `Datatypes.SensorDataPackage`. ("Classifier" is just UML jargon for "type"; a parameter's classifier = its type.)
     - **visibility** — `+` public, `-` private, `#` protected, `~` package. Anything exposed on a provided interface is `+`.
     - **return type** — what the operation returns, also prefixed with `Datatypes.`, e.g. `Datatypes.PatientStatus`. Use `void` if nothing.
+    - **operation description** — one short sentence describing the *effect* of calling the operation (what it does, what changes, or what it answers). This is the rule-code [Gen.desc.04] checks against. The inline note after the `—` in each signature below is the source — paste it into VP's General/Documentation tab for the operation.
+    - **return-type description** — when the operation has a return type, VP exposes a *separate* description field on the return type itself. Fill it with one short sentence describing what the returned value represents (e.g. "The current status of the patient, including risk level and timestamp."). This is what rule [Gen.desc.05] checks — leaving it blank is what produced the error `Operation getPatientRecord of interface IHISAccess has a return type but does not describe it`. Void operations skip this.
 - **Signature format to copy** (colon return type, named parameters; void operations omit the trailing `: ReturnType`):
     - `getPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus`
     - `setEstimatedPatientStatus(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus, timestamp: Datatypes.Timestamp)` *(no `: ReturnType` = void)*
