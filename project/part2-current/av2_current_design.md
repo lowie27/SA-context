@@ -409,24 +409,165 @@ existing interfaces reused verbatim (no change vs. initial architecture)
 
 ### 2c. Decomposed components
 
-> Each subsection below is a decomposition view (Conv. 5) for one parent component listed in §2a. Modules carry the `<<module>>` stereotype in VP. Internal interfaces (defined in §2d) do not appear on the C&C diagram.
->
-> **Not worked out yet.** Skeleton only — populate modules and their internal wiring once Av2's internal structure is decided. Each module needs a `description:`, a `provides:` list (any external or internal interface), and a `requires:` list (Conv. 4: at least one child of a decomposed parent must still expose each parent-level interface).
+> Each subsection below is a decomposition view (Conv. 5) for one parent component listed in §2a. Modules carry the `<<module>>` stereotype in VP. Internal interfaces (the ones with names like `IConfigCommand`, `IPriorityBuffer`, etc.) are defined in §2d and do not appear on the C&C diagram.
+
+okay question would you suggest to decompose CommunicationGateway, MonitoringService, PatientGateway
 
 #### CommunicationGateway
 
 - `decomposed` into modules (decomposition view — Conv. 5):
-    - TODO — list internal modules. Per the §2a description, candidates include: an authentication front, a routing/dispatch module (provides `BufferedDataDispatch`), a heartbeat tracker (provides `AvailabilityMonitoring`), a retry/backoff coordinator, and an ack-emission module. Confirm with teammate before wiring in VP.
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
 
 #### MonitoringService
 
 - `decomposed` into modules (decomposition view — Conv. 5):
-    - TODO — list internal modules. Per the §2a description, candidates include: a missing-sensor-data detector, an internal-subsystem failure detector, an SLA-violation detector, a failure classifier (by patient risk level), a notification dispatcher module (provides `NotificationDispatch`), a gap-duration recorder, and a recovery orchestrator (provides `RecoveryCoordination`). Confirm with teammate before wiring in VP.
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
 
 #### PatientGateway
 
 - `decomposed` into modules (decomposition view — Conv. 5):
-    - TODO — list internal modules. Per the §2a description, candidates include: a sensor-acquisition module, a primary-channel transmitter (provides `GatewayDataIngress`), a battery/network health monitor, a `LocalBufferingRepository`, a `RetryAndSynchronizationService`, and a backup emergency dispatcher (provides `EmergencyDispatch`). Confirm with teammate before wiring in VP.
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+    - `Component`
+        - description: TODO
+        - provides:
+            - `InterfaceTODO`
+        - requires:
+            - `InterfaceTODO`
+            - `InterfaceTODO`
+            - `InterfaceTODO`
 
 ### 2d. Internal interfaces
 
