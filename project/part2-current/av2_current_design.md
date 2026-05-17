@@ -76,11 +76,21 @@ okay because i cant tell you the answer because i did not make it try to reason 
 
 ### 2a. Components
 
-**VP entry rules — components get descriptions, interfaces get operations.** (Same as P1 §2a.)
-- Components need a **description** only: one short, concise sentence (≤ ~20 words). Source = the `description:` line below.
-- Interfaces (§2b) carry the operations.
+**VP entry rules — components get descriptions, interfaces get operations.**
+
+- **Components** (§2a) need a **description** only — one short, concise sentence (≤ ~20 words) in VP's General tab. The `description:` line under each component is the source — paste it into VP. No operations on the component itself.
+- **Interfaces** (§2b) need **operations**. For each operation, fill in four fields in VP:
+    - **name** — e.g. `transmitSensorData`
+    - **classifier** — the type of each parameter, prefixed with `Datatypes.`, e.g. `Datatypes.GatewayId`, `Datatypes.SensorDataPackage`. ("Classifier" is just UML jargon for "type"; a parameter's classifier = its type.)
+    - **visibility** — `+` public, `-` private, `#` protected, `~` package. Anything exposed on a provided interface is `+`.
+    - **return type** — what the operation returns, also prefixed with `Datatypes.`, e.g. `Datatypes.TransmissionAck`. Use `void` if nothing.
+- **Signature format to copy** (colon return type, named parameters; void operations omit the trailing `: ReturnType`):
+    - `transmitSensorData(gatewayId: Datatypes.GatewayId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp): Datatypes.TransmissionAck`
+    - `sendEmergencyNotification(message: Datatypes.EmergencyMessage)` *(no `: ReturnType` = void)*
 
 new components (fill in from teammate's design)
+
+#### SensorDataRepository
 
 - `SensorDataRepository`
     - description: Persistent store for incoming sensor data packages and their arrival timestamps. Provides the SensorDataMgmt interface for appending new readings and for querying historical sensor data needed by clinical models that require historical context.
@@ -90,6 +100,8 @@ new components (fill in from teammate's design)
     - requires:
         - none
 
+#### DataIngestionService
+
 - `DataIngestionService`
     - description: Consumes validated sensor data and emergency notifications from the MessageBroker and persists them through the SensorDataRepository. Acts as the single write path for incoming patient data into the backend persistence layer, decoupling the ingestion rate from the downstream risk-estimation pipeline.
     - node: TODO
@@ -98,6 +110,8 @@ new components (fill in from teammate's design)
     - requires:
         - `SensorDataMgmt`, `QueuedSensorDataMgmt`
 
+#### EmergencyBackupReceiver
+
 - `EmergencyBackupReceiver`
     - description: Receives emergency notifications transmitted via the backup SMS gateway when the primary channel is unavailable. Authenticates the sending patient gateway by a pre-registered device token embedded in the SMS payload, and forwards validated emergencies to the MessageBroker for the same downstream processing as primary-channel emergencies.
     - node: TODO
@@ -105,6 +119,8 @@ new components (fill in from teammate's design)
         - `BackupEmergencyIngress`
     - requires:
         - `QueuedSensorDataMgmt`
+
+#### MessageBroker
 
 - `MessageBroker`
     - description: Buffers validated sensor-data packages and emergency notifications between the CommunicationGateway and the DataIngestionService. Provides durability and decoupling so that transient failures of downstream services do not lead to data loss, and exposes a health-check endpoint for the InternalFailureDetector.
@@ -115,6 +131,8 @@ new components (fill in from teammate's design)
         - `BufferedDataDispatch`
 
 
+#### AcknowledgementService
+
 - `AcknowledgementService`
     - description: After RoutingManager confirms downstream delivery (e.g., MessageBroker accepts the message), DeliveryAcknowledger emits an acknowledgement back to the originating PatientGateway, allowing the gateway's RetryAndSynchronizationService to clear delivered entries from LocalBufferingRepository.
     - node: TODO
@@ -122,6 +140,8 @@ new components (fill in from teammate's design)
         - `DeliveryAck`
     - requires:
         - `BrokerCommitNotification`
+
+#### CommunicationGateway
 
 - `CommunicationGateway`
     - description: The single backend ingress point for all primary-channel patient gateway traffic. Authenticates incoming transmissions, routes them to downstream services (MessageBroker, EmergencyNotificationService), detects communication failures, coordinates retries with exponential backoff, tracks per-gateway heartbeats for missing-data detection, and acknowledges successfully dispatched messages back to the originating gateway.
@@ -131,6 +151,8 @@ new components (fill in from teammate's design)
     - requires:
         - `GatewayDataIngress`
 
+#### MonitoringService
+
 - `MonitoringService`
     - description: Central observability and recovery-orchestration component. Detects (a) missing sensor data, (b) internal subsystem crashes, (c) SLA violations of the telecom channel; classifies failures by affected patient risk level; notifies administrators and patient contacts within Av2 deadlines; records communication-gap durations; and coordinates recovery with the RecoverySyncService and RedeploymentCoordinator.
     - node: TODO
@@ -138,6 +160,8 @@ new components (fill in from teammate's design)
         - `RecoveryCoordination`, `NotificationDispatch`
     - requires:
         - `AvailabilityMonitoring`
+
+#### PatientGateway
 
 - `PatientGateway`
     - description: The patient-facing edge component running on the wearable/handheld device. Acquires raw sensor readings, transmits them to the backend CommunicationGateway over the primary telecom channel, monitors device battery and network health, manages local buffering during connectivity loss, and dispatches emergency notifications via the backup channel when the primary channel is unavailable. It is the only component that physically resides with the patient.
@@ -147,6 +171,8 @@ new components (fill in from teammate's design)
     - requires:
         - `DeliveryAck`, `BackupEmergencyIngress`, `GatewayResyncCommand`
 
+#### RecoverySyncService
+
 - `RecoverySyncService`
     - description: Coordinates post-failure recovery. When RecoveryTracker signals a failure has been resolved, RecoverySyncService (a) drains any sensor data queued in the MessageBroker that arrived during degraded mode, and (b) instructs the affected PatientGateway(s) to flush their LocalBufferingRepository through a GatewayResyncCommand.
     - node: TODO
@@ -154,6 +180,8 @@ new components (fill in from teammate's design)
         - `GatewayResyncCommand`
     - requires:
         - `RecoveryCoordination`, `QueuedSensorDataMgmt`
+
+#### RedeploymentCoordinator
 
 - `RedeploymentCoordinator`
     - description: TODO
@@ -164,6 +192,8 @@ new components (fill in from teammate's design)
         - `RecoveryCoordination`
 
 
+#### AdminPortal
+
 - `AdminPortal`
     - description: Provides the system administrator with a web-based interface for monitoring the operational status of the PMS, receiving failure notifications, and triggering redeployment or rollback of failed internal subsystems. It consumes the RedeploymentControl interface to initiate and monitor redeployment jobs, and receives notifications from the MonitoringService via the NotificationDispatch interface. It is the only component through which a system administrator can interact with the RedeploymentCoordinator.
     - node: TODO
@@ -171,6 +201,8 @@ new components (fill in from teammate's design)
         - none
     - requires:
         - `RedeploymentControl`, `NotificationDispatch`
+
+#### TODO (placeholder template)
 
 - `TODO`
     - description: TODO
@@ -190,12 +222,14 @@ modified existing components
 
 ### 2b. Interfaces
 
-new interfaces (fill in from teammate's design)
-
-> **Convention** — every interface entry follows this template:
+> **Custom-type marker (`†`)** — types not defined in initial-architecture §E.6 are marked with `†` on first use within each interface block. Full definitions in `datatypes_reference.md` §7.
+> Custom types used in Av2 (preliminary, confirm with teammate): `GatewayId`†, `EmergencyMessage`†, `TransmissionAck`†, `HealthStatus`† *(may already exist — confirm)*, `ClassifiedFailure`†, `RedeploymentJob`†, `RedeploymentJobId`†, `RedeploymentStatus`†.
+> Everything *not* marked with `†` already exists in §E.6 / §E.5 — reuse verbatim.
+> **VP entry convention (`Datatypes.` prefix)** — when entering operation parameters or return types in Visual Paradigm, prefix every type with `Datatypes.` (e.g. `Datatypes.GatewayId`, `Datatypes.SensorDataPackage`). The signatures below already use this prefix so you can paste them into VP 1:1. Primitives like `int`, `string`, `boolean` stay unprefixed. The `†` marker is documentation only — it does NOT appear in the VP classifier.
+>
+> **Interface entry convention** — every interface entry follows this template:
 > - operations use `paramname: ParamType, ...): ReturnType` (colon syntax for return type; void operations omit the trailing `: ReturnType`)
-> - parameter and return types are prefixed with `Datatypes.` for VP entry; primitives (`int`, `string`, `boolean`) stay unprefixed
-> - every interface ends with a `purpose:` line
+> - every interface ends with a `purpose:` line summarising its role
 >
 > ```
 > - `InterfaceName`
@@ -203,9 +237,13 @@ new interfaces (fill in from teammate's design)
 >     - required by:
 >         - `Component`
 >     - operations (all `+`):
->         - `operationName(paramname: ParamType, ...): ReturnType`
+>         - `operationName(paramname: ParamType, ...): ReturnType` — inline note (UC refs, §E refs, behaviour)
 >     - purpose: one-line explanation
 > ```
+
+new interfaces (fill in from teammate's design)
+
+#### QueuedSensorDataMgmt
 
 - `QueuedSensorDataMgmt`
     - provided by: `MessageBroker`
@@ -217,6 +255,8 @@ new interfaces (fill in from teammate's design)
         - TODO — no operations specified yet
     - purpose: TODO
 
+#### BrokerCommitNotification
+
 - `BrokerCommitNotification`
     - provided by: `MessageBroker`
     - required by:
@@ -224,6 +264,8 @@ new interfaces (fill in from teammate's design)
     - operations (all `+`):
         - TODO — no operations specified yet
     - purpose: TODO — fires when MessageBroker durably commits a message, so AcknowledgementService can ack the originating gateway
+
+#### BufferedDataDispatch
 
 - `BufferedDataDispatch`
     - provided by: TODO
@@ -234,6 +276,8 @@ new interfaces (fill in from teammate's design)
         - `dispatchEmergencyNotification(gatewayId: Datatypes.GatewayId, message: Datatypes.EmergencyMessage, timestamp: Datatypes.Timestamp): TODO_ReturnType`
     - purpose: TODO
     - **note:** return types missing — pick one or mark void
+
+#### InternalHealthCheck
 
 - `InternalHealthCheck`
     - provided by: `MessageBroker`, `CommunicationGateway`
@@ -246,6 +290,8 @@ new interfaces (fill in from teammate's design)
     - **note:** an interface should have a single provider per Conv. 1/3. If both `MessageBroker` and `CommunicationGateway` need a health probe, split into two interfaces (e.g., `BrokerHealthCheck`, `GatewayHealthCheck`) or factor the probe into one shared module.
     - **note:** confirm `Datatypes.HealthStatus` is intended for this purpose; if not, introduce a new type.
 
+#### DeliveryAck
+
 - `DeliveryAck`
     - provided by: `AcknowledgementService`
     - required by:
@@ -253,6 +299,8 @@ new interfaces (fill in from teammate's design)
     - operations (all `+`):
         - TODO — no operations specified yet
     - purpose: TODO — confirms successful delivery back to the originating PatientGateway so its retry/sync logic can clear buffered entries
+
+#### BackupEmergencyIngress
 
 - `BackupEmergencyIngress`
     - provided by: `EmergencyBackupReceiver`
@@ -262,12 +310,16 @@ new interfaces (fill in from teammate's design)
         - TODO — no operations specified yet
     - purpose: TODO — backup channel (e.g., SMS) for emergency notifications when the primary channel is unavailable
 
+#### EmergencyDispatch
+
 - `EmergencyDispatch`
     - provided by: `PatientGateway`
     - required by: none
     - operations (all `+`):
         - `sendEmergencyNotification(message: Datatypes.EmergencyMessage)`
     - purpose: TODO
+
+#### GatewayDataIngress
 
 - `GatewayDataIngress`
     - provided by: TODO
@@ -278,6 +330,8 @@ new interfaces (fill in from teammate's design)
         - `transmitEmergencyNotification(gatewayId: Datatypes.GatewayId, message: Datatypes.EmergencyMessage, timestamp: Datatypes.Timestamp): Datatypes.TransmissionAck`
     - purpose: TODO
     - **note:** `Datatypes.TransmissionAck` is not yet defined — add it to the Datatypes catalogue.
+
+#### AvailabilityMonitoring
 
 - `AvailabilityMonitoring`
     - provided by: `CommunicationGateway`
@@ -291,6 +345,8 @@ new interfaces (fill in from teammate's design)
     - purpose: TODO — exposes per-gateway heartbeat state to MonitoringService for missing-data detection
     - **note:** return types of `getLastHeartbeat` / `getExpectedInterval` missing — likely `Datatypes.Timestamp` and `int` respectively; confirm.
 
+#### RecoveryCoordination
+
 - `RecoveryCoordination`
     - provided by: `MonitoringService`
     - required by:
@@ -300,6 +356,8 @@ new interfaces (fill in from teammate's design)
         - TODO — no operations specified yet
     - purpose: TODO
 
+#### GatewayResyncCommand
+
 - `GatewayResyncCommand`
     - provided by: `RecoverySyncService`
     - required by:
@@ -307,6 +365,8 @@ new interfaces (fill in from teammate's design)
     - operations (all `+`):
         - TODO — no operations specified yet
     - purpose: TODO — backend instructs a PatientGateway to flush its LocalBufferingRepository after a recovered outage
+
+#### NotificationDispatch
 
 - `NotificationDispatch`
     - provided by: `MonitoringService`
@@ -316,6 +376,8 @@ new interfaces (fill in from teammate's design)
         - `notifyAdministrator(failure: Datatypes.ClassifiedFailure, message: string)`
         - `notifyPatientContact(patientId: Datatypes.PatientId, failure: Datatypes.ClassifiedFailure, message: string)`
     - purpose: TODO
+
+#### RedeploymentControl
 
 - `RedeploymentControl`
     - provided by: `RedeploymentCoordinator`
