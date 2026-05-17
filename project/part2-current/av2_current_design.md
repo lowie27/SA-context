@@ -192,118 +192,140 @@ modified existing components
 
 new interfaces (fill in from teammate's design)
 
-okay actually it is this convention so stick to this convention please:
-
-- `TODO_InterfaceName`
-    - provided by: `TODO_Component`
-    - required by:
-        - `TODO_Component`
-    - operations (all `+`):
-        - `TODO_operationName(paramname: ParamType, ...): ReturnType`
-    - purpose: TODO
-
-all these need to be changed to comply:
+> **Convention** — every interface entry follows this template:
+> - operations use `paramname: ParamType, ...): ReturnType` (colon syntax for return type; void operations omit the trailing `: ReturnType`)
+> - parameter and return types are prefixed with `Datatypes.` for VP entry; primitives (`int`, `string`, `boolean`) stay unprefixed
+> - every interface ends with a `purpose:` line
+>
+> ```
+> - `InterfaceName`
+>     - provided by: `Component`
+>     - required by:
+>         - `Component`
+>     - operations (all `+`):
+>         - `operationName(paramname: ParamType, ...): ReturnType`
+>     - purpose: one-line explanation
+> ```
 
 - `QueuedSensorDataMgmt`
     - provided by: `MessageBroker`
     - required by:
-        - `EmergencyBackupReceiver`, `RecoverySyncService`, `DataIngestionService`
-    - operations (all `+`) NO OPERATIONS YET:
-        - `TODO_operationName(ParamType) → ReturnType` — TODO purpose
+        - `EmergencyBackupReceiver`
+        - `RecoverySyncService`
+        - `DataIngestionService`
+    - operations (all `+`):
+        - TODO — no operations specified yet
+    - purpose: TODO
 
 - `BrokerCommitNotification`
     - provided by: `MessageBroker`
     - required by:
         - `AcknowledgementService`
-    - operations (all `+`) NO OPERATIONS YET:
-        - `TODO_operationName(ParamType) → ReturnType` — TODO purpose
+    - operations (all `+`):
+        - TODO — no operations specified yet
+    - purpose: TODO — fires when MessageBroker durably commits a message, so AcknowledgementService can ack the originating gateway
 
 - `BufferedDataDispatch`
-    - provided by: `TODO_Component`
+    - provided by: TODO
     - required by:
-        - `TODO_Component`
-    - operations (all `+`) NO RETURN TYPES??:
-        - `dispatchSensorData(Datatypes.GatewayId, Datatypes.SensorDataPackage, Datatypes.Timestamp)` — TODO purpose
-        - `dispatchEmergencyNotification(Datatypes.GatewayId, Datatypes.EmergencyMessage, Datatypes.Timestamp)` — TODO purpose
+        - TODO
+    - operations (all `+`):
+        - `dispatchSensorData(gatewayId: Datatypes.GatewayId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp): TODO_ReturnType`
+        - `dispatchEmergencyNotification(gatewayId: Datatypes.GatewayId, message: Datatypes.EmergencyMessage, timestamp: Datatypes.Timestamp): TODO_ReturnType`
+    - purpose: TODO
+    - **note:** return types missing — pick one or mark void
 
-- `InternalHealthCheck` also  mistake 2 provided interface not possible right?
+- `InternalHealthCheck`
     - provided by: `MessageBroker`, `CommunicationGateway`
     - required by:
-        - `TODO_Component`
-    - operations (all `+`) IS Datatypes.HealthStatus MADE FOR THIS OR IS IT WRONG PURPOSE:
-        - `ping() → Datatypes.HealthStatus` — TODO purpose
-        - `getSubSystem() → Map<String, Datatypes.HealthStatus>` — TODO purpose
+        - TODO
+    - operations (all `+`):
+        - `ping(): Datatypes.HealthStatus`
+        - `getSubSystem(): Map<string, Datatypes.HealthStatus>`
+    - purpose: TODO — synchronous health probe used by an internal failure detector
+    - **note:** an interface should have a single provider per Conv. 1/3. If both `MessageBroker` and `CommunicationGateway` need a health probe, split into two interfaces (e.g., `BrokerHealthCheck`, `GatewayHealthCheck`) or factor the probe into one shared module.
+    - **note:** confirm `Datatypes.HealthStatus` is intended for this purpose; if not, introduce a new type.
 
 - `DeliveryAck`
     - provided by: `AcknowledgementService`
     - required by:
         - `PatientGateway`
-    - operations (all `+`) NO OPERATIONS YET:
-        - `TODO_operationName(ParamType) → ReturnType` — TODO purpose
+    - operations (all `+`):
+        - TODO — no operations specified yet
+    - purpose: TODO — confirms successful delivery back to the originating PatientGateway so its retry/sync logic can clear buffered entries
 
 - `BackupEmergencyIngress`
     - provided by: `EmergencyBackupReceiver`
     - required by:
         - `PatientGateway`
-    - operations (all `+`) NO OPERATIONS YET:
-        - `TODO_operationName(ParamType) → ReturnType` — TODO purpose
+    - operations (all `+`):
+        - TODO — no operations specified yet
+    - purpose: TODO — backup channel (e.g., SMS) for emergency notifications when the primary channel is unavailable
 
 - `EmergencyDispatch`
     - provided by: `PatientGateway`
-    - required by:
-        - none
+    - required by: none
     - operations (all `+`):
-        - `sendEmergencyNotification(Datatypes.EmergencyMessage)` — TODO purpose
+        - `sendEmergencyNotification(message: Datatypes.EmergencyMessage)`
+    - purpose: TODO
 
 - `GatewayDataIngress`
-    - provided by: `TODO_Component`
+    - provided by: TODO
     - required by:
-        - `TODO_Component`
-    - operations (all `+`) TODO TransmissionAck not a type yet create this:
-        - `transmitSensorData(Datatypes.GatewayId, Datatypes.SensorDataPackage, Datatypes.Timestamp) → TransmissionAck` — TODO purpose
-        - `transmitEmergencyNotification(Datatypes.GatewayId, Datatypes.EmergencyMessage, Datatypes.Timestamp) → TransmissionAck` — TODO purpose
+        - TODO
+    - operations (all `+`):
+        - `transmitSensorData(gatewayId: Datatypes.GatewayId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp): Datatypes.TransmissionAck`
+        - `transmitEmergencyNotification(gatewayId: Datatypes.GatewayId, message: Datatypes.EmergencyMessage, timestamp: Datatypes.Timestamp): Datatypes.TransmissionAck`
+    - purpose: TODO
+    - **note:** `Datatypes.TransmissionAck` is not yet defined — add it to the Datatypes catalogue.
 
 - `AvailabilityMonitoring`
     - provided by: `CommunicationGateway`
     - required by:
         - `MonitoringService`
     - operations (all `+`):
-        - `registerGateway(Datatypes.GatewayId, int)` — TODO purpose
-        - `recordHeartBeat(Datatypes.GatewayId, Datatypes.Timestamp)` — TODO purpose
-        - `getLastHeartbeat(Datatypes.GatewayId)` — TODO purpose
-        - `getExpectedInterval(Datatypes.GatewayId)` — TODO purpose
+        - `registerGateway(gatewayId: Datatypes.GatewayId, expectedInterval: int)`
+        - `recordHeartBeat(gatewayId: Datatypes.GatewayId, timestamp: Datatypes.Timestamp)`
+        - `getLastHeartbeat(gatewayId: Datatypes.GatewayId): TODO_ReturnType`
+        - `getExpectedInterval(gatewayId: Datatypes.GatewayId): TODO_ReturnType`
+    - purpose: TODO — exposes per-gateway heartbeat state to MonitoringService for missing-data detection
+    - **note:** return types of `getLastHeartbeat` / `getExpectedInterval` missing — likely `Datatypes.Timestamp` and `int` respectively; confirm.
 
 - `RecoveryCoordination`
     - provided by: `MonitoringService`
     - required by:
         - `RecoverySyncService`
         - `RedeploymentCoordinator`
-    - operations (all `+`) NO OPERATIONS YET:
-        - `TODO_operationName(ParamType) → ReturnType` — TODO purpose
+    - operations (all `+`):
+        - TODO — no operations specified yet
+    - purpose: TODO
 
 - `GatewayResyncCommand`
     - provided by: `RecoverySyncService`
     - required by:
         - `PatientGateway`
-    - operations (all `+`) NO OPERATIONS YET:
-        - `TODO_operationName(ParamType) → ReturnType` — TODO purpose
+    - operations (all `+`):
+        - TODO — no operations specified yet
+    - purpose: TODO — backend instructs a PatientGateway to flush its LocalBufferingRepository after a recovered outage
 
 - `NotificationDispatch`
     - provided by: `MonitoringService`
     - required by:
         - `AdminPortal`
     - operations (all `+`):
-        - `notifyAdministrator(failure: Datatypes.ClassifiedFailure, message: string)` — TODO purpose
-        - `notifyPatientContact(Datatypes.PatientId, Datatypes.ClassifiedFailure, message: string)` — TODO purpose
+        - `notifyAdministrator(failure: Datatypes.ClassifiedFailure, message: string)`
+        - `notifyPatientContact(patientId: Datatypes.PatientId, failure: Datatypes.ClassifiedFailure, message: string)`
+    - purpose: TODO
 
 - `RedeploymentControl`
     - provided by: `RedeploymentCoordinator`
     - required by:
         - `AdminPortal`
     - operations (all `+`):
-        - `triggerRedeployment(subsystemId: string) → Datatypes.RedeploymentJob` — TODO purpose
-        - `triggerRollback(subsystemId: string, targetVersion: string) → Datatypes.RedeploymentJob` — TODO purpose
-        - `getRedeploymentStatus(id: Datatypes.RedeploymentJobId) → Datatypes.RedeploymentStatus` — TODO purpose
+        - `triggerRedeployment(subsystemId: string): Datatypes.RedeploymentJob`
+        - `triggerRollback(subsystemId: string, targetVersion: string): Datatypes.RedeploymentJob`
+        - `getRedeploymentStatus(id: Datatypes.RedeploymentJobId): Datatypes.RedeploymentStatus`
+    - purpose: TODO
 
 
 existing interfaces extended by Av2 (signatures originate in §E.3 of `initial_architecture.md`)
