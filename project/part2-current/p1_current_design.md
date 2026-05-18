@@ -51,26 +51,29 @@ Patients need to be queried fast so there has to be caching in place so results 
 
 [claude] Expanded version of the same intuition, organized around the QAS:
 
-Replace `OtherFunctionality` by splitting it into two halves on **two separate nodes**, so the
-physician-facing work cannot contend with sensor ingest or risk estimation (this is what
-Response item 6 demands):
+Split `OtherFunctionality` across **two separate nodes**, so the physician-facing work
+cannot contend with sensor ingest or risk estimation (this is what Response item 6 demands):
 
-1. **PhysicianAccessNode** — a thin `PhysicianGateway` plus five back-end services
-   (`PhysicianCommandService`, `PatientQueryService`, `NotificationDispatcher`, `HISAdapter`,
-   `PatientStatusCache`). All physician traffic terminates here. Tiered SLAs (2/5/10s queries,
-   10/30/60s notifications) are realised by priority queues + a hot cache for high-risk
-   patient status.
+1. **PhysicianNode** — a thin `P1PhysicianGateway` plus four back-end services
+   (`P1PhysicianCommandService`, `P1PatientQueryService`, `P1NotificationDispatcher`,
+   `P1PatientGatewayCommander`). All physician traffic terminates here. Tiered SLAs
+   (2/5/10s queries, 10/30/60s notifications) are realised by priority queues.
 
-2. **PatientDataNode** — a `PatientDataService` that takes over the ingest / store side of
+2. **PatientDataNode** — a `P1PatientDataService` that takes over the ingest / store side of
    `OtherFunctionality`: it receives raw sensor data, exposes `SensorDataMgmt`, `PatientRecordMgmt`,
    `OtherDataMgmt` to the existing risk-estimation pipeline, and writes patient status back
-   when `RiskEstimationCombiner` finishes a job. `ClinicalModelDB` also moves here, so
-   `TODONode` retires.
+   when `RiskEstimationCombiner` finishes a job. `P1PatientStatusCache` and `P1HISAdapter`
+   also live here.
 
 The two nodes communicate over the network. Because they don't share OS resources, a spike
 in physician requests or notifications cannot starve the ingest path or the risk-estimation
-processors. The `PatientStatusCache` on the physician side absorbs most read load and keeps
-the cross-node traffic bounded.
+processors. The `P1PatientStatusCache` sits on `PatientDataNode` next to `P1PatientDataService`,
+so cache misses are local; cross-node traffic from PhysicianNode is bounded by the rate of
+physician-initiated reads/writes rather than by cache misses.
+
+> **Note**: per the current VP model (`report.pdf`), `OtherFunctionality` and `TODONode` are
+> NOT yet retired and `ClinicalModelDB` is still on `TODONode`. The structural intent above
+> is the target; the model still carries the placeholders.
 
 i like this suggestions
 
@@ -96,104 +99,105 @@ i like this suggestions
 
 new components, like your style of defining components very clear!
 
-#### PhysicianGateway
+#### P1PhysicianGateway
 
-- `PhysicianGateway`
+- `P1PhysicianGateway`
     - description: single external entry point for physicians; thin router with no business logic.
-    - node: PhysicianAccessNode
+    - node: PhysicianNode (and PhysicianWorkstation per C.1 context diagram)
     - provides:
-        - `IPhysicianAPI`
+        - `P1IPhysicianAPI`
     - requires:
-        - `IPhysicianCommand`
-        - `IPatientQuery`
-        - `INotificationInbox`
-#### PhysicianCommandService
+        - `P1IPhysicianCommand`
+        - `P1IPatientQuery`
+        - `P1INotificationInbox`
+#### P1PhysicianCommandService
 
-- `PhysicianCommandService`
+- `P1PhysicianCommandService`
     - description: handles physician write/command flows: UC7 (configure risk assessment), UC8 (update risk level), UC9 (on-demand consultation).
-    - node: PhysicianAccessNode
+    - node: PhysicianNode
     - provides:
-        - `IPhysicianCommand`
+        - `P1IPhysicianCommand`
     - requires:
-        - `PatientRecordMgmt` (UC8 EHR write — routes via EHRProxyModule for cache coherence)
-        - `ClinicalConfigMgmt` (UC7 write — new interface on ClinicalModelDB)
-        - `IRiskEvents` (UC9 result delivery)
+        - `PatientRecordMgmt` (UC8 EHR write — routes via P1EHRProxyModule for cache coherence)
+        - `P1ClinicalConfigMgmt` (UC7 write — new interface on ClinicalModelDB)
+        - `P1IRiskEvents` (UC9 result delivery)
         - `LaunchRiskEstimation` (UC9 priority launch with correlation)
         - `ClinicalModelCacheMgmt` (UC7 invalidation after the config write)
-        - `IOnDemandSensorFetch` (UC9 gateway fetch)
-        - `SensorDataMgmt` (UC9 store fetched data with triggerEstimation=false)
+        - `P1IOnDemandSensorFetch` (UC9 gateway fetch)
+        - `SensorDataMgmt` (UC9 store fetched data — see note on triggerEstimation below)
     - **decomposed — see §2c**
 
-#### PatientQueryService
+#### P1PatientQueryService
 
-- `PatientQueryService`
+- `P1PatientQueryService`
     - description: handles UC6 patient-status reads; tiered priority queue (high > medium > low) feeds the 2/5/10 s SLA tiers.
-    - node: PhysicianAccessNode
+    - node: PhysicianNode
     - provides:
-        - `IPatientQuery`
+        - `P1IPatientQuery`
     - requires:
-        - `IPatientStatusRead`
-#### PatientStatusCache
+        - `P1IPatientStatusRead`
+#### P1PatientStatusCache
 
-- `PatientStatusCache`  <!-- [claude] new -->
-    - description: read-through cache for patient status; pins high-risk patients to bound cross-node traffic.
-    - node: PhysicianAccessNode
+- `P1PatientStatusCache`  <!-- [claude] new -->
+    - description: read-through cache for patient status; pins high-risk patients to keep status reads off the slow path.
+    - node: PatientDataNode  <!-- [claude] per report E.1.47 / E.4.20 / C.3 / C.4: cache is co-located with PatientDataService on PatientDataNode. Cross-node traffic for UC6 is the PhysicianNode→PatientDataNode call to P1IPatientStatusRead, not a miss-fallback to OtherDataMgmt. -->
     - provides:
-        - `IPatientStatusRead`
+        - `P1IPatientStatusRead`
     - requires:
         - `OtherDataMgmt` (miss fallback + invalidation; reuses the existing patient-status interface per §E.3.19)
 
-#### NotificationDispatcher
+#### P1NotificationDispatcher
 
-- `NotificationDispatcher`
-    - description: UC5 dispatcher; subscribes to IRiskEvents; red > yellow > green priority queue; drops green first under overload; persists red/yellow so they cannot be lost.
-    - node: PhysicianAccessNode
+- `P1NotificationDispatcher`
+    - description: UC5 dispatcher; subscribes to P1IRiskEvents; red > yellow > green priority queue; drops green first under overload; persists red/yellow so they cannot be lost.
+    - node: PhysicianNode
     - provides:
-        - `INotificationInbox`
+        - `P1INotificationInbox`
     - requires:
-        - `IRiskEvents`
+        - `P1IRiskEvents`
+        - `Av2EmergencyDispatch`  <!-- [claude] per report E.1.41 / E.3.16: P1NotificationDispatcher consumes the Av2 emergency channel (Av2EmergencyNotificationService / Av2PatientGateway). New seam — flag for §7 coordination with teammate. -->
     - **decomposed — see §2c**
 
-#### PatientGatewayCommander
+#### P1PatientGatewayCommander
 
-- `PatientGatewayCommander`  <!-- [claude] new — closes UC9 gateway-fetch gap. Treats the patient gateway as an external system (same pattern as HISAdapter for HIS). -->
+- `P1PatientGatewayCommander`  <!-- [claude] new — closes UC9 gateway-fetch gap. Treats the patient gateway as an external system (same pattern as P1HISAdapter for HIS). -->
     - description: outbound channel from PMS to patient gateways for UC9 on-demand sensor-data fetches; synchronous with a bounded timeout.
-    - node: PhysicianAccessNode
+    - node: PhysicianNode
     - provides:
-        - `IOnDemandSensorFetch`
+        - `P1IOnDemandSensorFetch`
     - requires:
-        - `patientGatewayAPI` (external interface exposed by the patient gateway; new — see §6 OQ4 for auth model)
+        - (none in current VP model)  <!-- [claude] design intent was an external `patientGatewayAPI` required interface mirroring healthAPI on HIS, but per report E.1.45 nothing is wired yet. Add the external interface in VP and update §6 OQ4. -->
 
-#### HISAdapter
+#### P1HISAdapter
 
-- `HISAdapter`
-    - description: outbound adapter for the external HIS healthAPI; used by EHRProxyModule for UC16 reads and UC17 writes.
-    - node: PatientDataNode  <!-- [claude] kept on PatientDataNode: co-located with EHRProxyModule, which fronts every HIS call. PhysicianCommandService's UC8 write reaches HIS via PatientRecordMgmt.updatePatientRecord (one cross-node hop) but with structural cache coherence. -->
+- `P1HISAdapter`
+    - description: outbound adapter for the external HIS healthAPI; used by P1EHRProxyModule for UC16 reads and UC17 writes.
+    - node: PatientDataNode  <!-- [claude] co-located with P1EHRProxyModule, which fronts every HIS call. -->
     - provides:
-        - `IHISAccess`
+        - `P1IHISAccess`
     - requires:
         - `healthAPI`
 
-#### PatientDataService
+#### P1PatientDataService
 
-- `PatientDataService`  <!-- [claude] new — replaces OtherFunctionality -->
+- `P1PatientDataService`  <!-- [claude] new — replaces OtherFunctionality's data-side responsibilities -->
     - description: owns raw sensor data, patient status, and the HIS EHR proxy; takes over the three interfaces OtherFunctionality exposed.
     - node: PatientDataNode
     - provides:
         - `SensorDataMgmt`
         - `OtherDataMgmt`
         - `PatientRecordMgmt`
-        - `IRiskEvents`  <!-- [claude] IRiskEvents now provided here (not by RiskEstimationCombiner) — fired internally when setEstimatedPatientStatus actually changes status, matching the existing OtherFunctionality contract ("appropriate parties are notified") -->
+        - `P1IRiskEvents`  <!-- [claude] P1IRiskEvents now provided here (not by RiskEstimationCombiner) — fired internally when setEstimatedPatientStatus actually changes status, matching the existing OtherFunctionality contract ("appropriate parties are notified") -->
     - requires:
         - `LaunchRiskEstimation`
-        - `IHISAccess`  <!-- [claude] required by EHRProxyModule because PatientRecordMgmt is a HIS proxy per §E.3.20 -->
+        - `P1IHISAccess`  <!-- [claude] required by P1EHRProxyModule because PatientRecordMgmt is a HIS proxy per §E.3.20 -->
     - **decomposed — see §2c**
 
-#### Retired / relocated
+#### Still present in VP (intended retirements not yet done)
 
-- `OtherFunctionality` — **retired**; replaced by PatientDataService (ingest + store side) and the six physician-side components on PhysicianAccessNode. Convention 4 satisfied because PatientDataService still exposes the three legacy interfaces (SensorDataMgmt, PatientRecordMgmt, OtherDataMgmt) via its modules.
-- `TODONode` — **retired**; replaced by PhysicianAccessNode + PatientDataNode.
-- `ClinicalModelDB` — **relocated** from TODONode to PatientDataNode (responsibilities unchanged).
+- `OtherFunctionality` — **still present** in the VP model (report E.1.34) and still deployed on `TODONode` / `TODO Node (Pilot Deployment)`. The design intent is to retire it once `P1PatientDataService` + the four PhysicianNode components fully cover its responsibilities.
+- `TODONode` / `TODO Node (Pilot Deployment)` — **still present** (report E.4.37, E.4.38). Intended to be replaced by PhysicianNode + PatientDataNode.
+- `ClinicalModelDB` — **still on TODONode** (report E.1.28). Intent is to relocate to PatientDataNode; not yet done in VP. It already exposes the new `P1ClinicalConfigMgmt` interface alongside `ClinicalModelStorage` (report E.1.28 confirms this).
 
 ### 2b. Interfaces
 
@@ -222,10 +226,10 @@ new components, like your style of defining components very clear!
 
 new interfaces
 
-#### IPhysicianAPI
+#### P1IPhysicianAPI
 
-- `IPhysicianAPI`
-    - provided by: `PhysicianGateway`
+- `P1IPhysicianAPI`
+    - provided by: `P1PhysicianGateway`
     - required by: external (physicians calling into the PMS)
     - operations (all `+`):
         - `consultPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus` — UC6
@@ -242,12 +246,12 @@ new interfaces
             - effect: Registers a physician to receive notifications about subsequent patient-status changes.
     - purpose: external physician-facing surface; thin façade routing UC5–UC9 commands and queries into the back-end services
 
-#### IPhysicianCommand
+#### P1IPhysicianCommand
 
-- `IPhysicianCommand`
-    - provided by: `PhysicianCommandService`
+- `P1IPhysicianCommand`
+    - provided by: `P1PhysicianCommandService` (via `P1CommandRouter` at the boundary)
     - required by:
-        - `PhysicianGateway`
+        - `P1PhysicianGateway`
     - operations (all `+`):
         - `configurePatientRiskAssessment(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7
             - effect: Overwrites the per-patient ClinicalModelConfiguration and invalidates the clinical-model cache.
@@ -256,26 +260,26 @@ new interfaces
         - `requestOnDemandConsultation(patientId: Datatypes.PatientId): Datatypes.ConsultationId†` — UC9
             - effect: Initiates an on-demand consultation — fetches fresh sensor data, launches a priority risk estimation, and returns an id correlating the eventual result.
             - returns: The ConsultationId minted for this request, used to match the result back to the caller.
-    - purpose: physician write/command surface (UC7, UC8, UC9) consumed by PhysicianGateway
+    - purpose: physician write/command surface (UC7, UC8, UC9) consumed by P1PhysicianGateway
 
-#### IPatientQuery
+#### P1IPatientQuery
 
-- `IPatientQuery`
-    - provided by: `PatientQueryService`
+- `P1IPatientQuery`
+    - provided by: `P1PatientQueryService`
     - required by:
-        - `PhysicianGateway`
+        - `P1PhysicianGateway`
     - operations (all `+`):
         - `consultPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus` — UC6; the service picks the priority tier (high/med/low) from the patient's current risk level
             - effect: Reads the patient's current status and dispatches the request to the priority tier matching the patient's risk level so the 2/5/10 s SLA holds under load.
             - returns: The patient's most recent status.
     - purpose: physician read surface backing UC6 with tiered 2/5/10 s SLAs
 
-#### INotificationInbox
+#### P1INotificationInbox
 
-- `INotificationInbox`
-    - provided by: `NotificationDispatcher`
+- `P1INotificationInbox`
+    - provided by: `P1NotificationDispatcher` (via `P1NotificationInboxModule` at the boundary)
     - required by:
-        - `PhysicianGateway`
+        - `P1PhysicianGateway`
     - operations (all `+`):
         - `subscribeToNotifications(physicianId: Datatypes.PhysicianId†)` — register a physician to receive notifications
             - effect: Adds the physician to the recipient registry so future patient-status events fan out to them.
@@ -288,12 +292,13 @@ new interfaces
             - effect: Confirms delivery of the notification so the dispatcher can remove it from the priority buffer and the durable log.
     - purpose: notification inbox surface for the gateway; subscribe/unsubscribe, poll pending, and ack delivery
 
-#### IHISAccess
+#### P1IHISAccess
 
-- `IHISAccess`
-    - provided by: `HISAdapter`
+- `P1IHISAccess`
+    - provided by: `P1HISAdapter`
     - required by:
-        - `EHRProxyModule` (UC16 reads, UC17 writes — sole consumer; UC8 writes route through PatientRecordMgmt for cache coherence)
+        - `P1EHRProxyModule` (UC16 reads, UC17 writes — sole consumer; UC8 writes route through PatientRecordMgmt for cache coherence)
+        - `P1PatientDataService` (parent-component required interface per Conv. 4)
     - operations (all `+`):
         - `getPatientRecord(patientId: Datatypes.PatientId): Datatypes.PatientRecord` — UC16; wraps the relevant `healthAPI` reads (getPatient / getObservation / getRiskAssessment)
             - effect: Reads the patient's record from the external HIS by combining the relevant healthAPI reads into one record-level view.
@@ -302,52 +307,52 @@ new interfaces
             - effect: Writes the patient record back to the HIS by dispatching the appropriate healthAPI save operations.
     - purpose: adapter façade over the external HIS healthAPI, exposing record-level read/write
 
-#### ClinicalConfigMgmt
+#### P1ClinicalConfigMgmt
 
-- `ClinicalConfigMgmt`  <!-- [claude] new interface alongside the existing read-only ClinicalModelStorage on ClinicalModelDB. UC7 needs a write surface; this is it. ClinicalModelCache still sockets onto ClinicalModelStorage so it cannot accidentally gain write access. -->
+- `P1ClinicalConfigMgmt`  <!-- [claude] new interface alongside the existing read-only ClinicalModelStorage on ClinicalModelDB. UC7 needs a write surface; this is it. ClinicalModelCache still sockets onto ClinicalModelStorage so it cannot accidentally gain write access. -->
     - provided by: `ClinicalModelDB` (new interface alongside the existing ClinicalModelStorage)
     - required by:
-        - `PhysicianCommandService` (UC7)
+        - `P1PhysicianCommandService` (UC7, via `P1ConfigurationHandler`)
     - operations (all `+`):
         - `setClinicalModelConfigForPatient(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7; overwrites the per-patient config
             - effect: Overwrites the per-patient ClinicalModelConfiguration in ClinicalModelDB; the caller is then expected to invalidate ClinicalModelCache.
     - purpose: write surface for per-patient ClinicalModelConfiguration (UC7), alongside the existing read-only ClinicalModelStorage on ClinicalModelDB
-    - note: caller (PhysicianCommandService) must call `ClinicalModelCacheMgmt.invalidateCacheEntries(patientId)` after a successful write — the cache won't otherwise notice the change. Mirrors the legacy `OtherFunctionality → ClinicalModelCacheMgmt` invalidation edge.
+    - note: caller (P1PhysicianCommandService) must call `ClinicalModelCacheMgmt.invalidateCacheEntries(patientId)` after a successful write — the cache won't otherwise notice the change. Mirrors the legacy `OtherFunctionality → ClinicalModelCacheMgmt` invalidation edge.
 
-#### IRiskEvents
+#### P1IRiskEvents
 
-- `IRiskEvents`  <!-- [claude] push, provided by PatientDataService — fired internally when setEstimatedPatientStatus changes the stored status. Matches the existing OtherFunctionality contract ("appropriate parties are notified") without modifying RiskEstimationCombiner. -->
-    - provided by: `PatientDataService` (via PatientStatusModule)
+- `P1IRiskEvents`  <!-- [claude] push, provided by P1PatientDataService — fired internally when setEstimatedPatientStatus changes the stored status. Matches the existing OtherFunctionality contract ("appropriate parties are notified") without modifying RiskEstimationCombiner. -->
+    - provided by: `P1PatientDataService` (via `P1PatientStatusModule`)
     - required by:
-        - `NotificationDispatcher` (UC5 notify)
-        - `PhysicianCommandService` (UC9 result delivery)
+        - `P1NotificationDispatcher` (UC5 notify, via `P1RiskEventSubscriber`)
+        - `P1PhysicianCommandService` (UC9 result delivery, via `P1OnDemandConsultationHandler`)
     - operations (all `+`):
-        - `subscribe(subscriberId: Datatypes.SubscriberId†, filter: Datatypes.FilterCriteria†): Datatypes.SubscriptionId†` — register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (NotificationDispatcher gets every event)
+        - `subscribe(subscriberId: Datatypes.SubscriberId†, filter: Datatypes.FilterCriteria†): Datatypes.SubscriptionId†` — register a subscriber; `FilterCriteria` may carry a correlationId (UC9 result lookup) or be empty (P1NotificationDispatcher gets every event)
             - effect: Registers a subscriber to receive RiskEvent payloads matching the filter; an empty filter receives every event.
             - returns: A SubscriptionId the caller uses to unsubscribe later.
         - `unsubscribe(subscriptionId: Datatypes.SubscriptionId†)`
             - effect: Removes the named subscription so no further RiskEvents are pushed to it.
-    - purpose: push channel for patient-status risk events; consumed by NotificationDispatcher (UC5) and PhysicianCommandService (UC9 result delivery)
+    - purpose: push channel for patient-status risk events; consumed by P1NotificationDispatcher (UC5) and P1PhysicianCommandService (UC9 result delivery)
     - note: event payload delivered to subscribers is `RiskEvent†(PatientId, PatientStatus, Timestamp, CorrelationId†?)`. Fired by PatientStatusModule when `setEstimatedPatientStatus` actually changes the stored status.
 
-#### IPatientStatusRead
+#### P1IPatientStatusRead
 
-- `IPatientStatusRead`
-    - provided by: `PatientStatusCache`
+- `P1IPatientStatusRead`
+    - provided by: `P1PatientStatusCache`
     - required by:
-        - `PatientQueryService`
+        - `P1PatientQueryService`
     - operations (all `+`):
         - `getPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus` — cache-first read; on miss the cache falls back to `OtherDataMgmt.getPatientStatus` and populates itself
             - effect: Cache-first read of the patient's status; on miss the cache fetches via OtherDataMgmt and populates itself for subsequent reads.
             - returns: The patient's most recent status.
     - purpose: cache-first patient status read; miss-fallback into OtherDataMgmt
 
-#### IOnDemandSensorFetch
+#### P1IOnDemandSensorFetch
 
-- `IOnDemandSensorFetch`
-    - provided by: `PatientGatewayCommander`
+- `P1IOnDemandSensorFetch`
+    - provided by: `P1PatientGatewayCommander`
     - required by:
-        - `PhysicianCommandService`
+        - `P1PhysicianCommandService` (via `P1OnDemandConsultationHandler`)
     - operations (all `+`):
         - `requestCurrentSensorData(patientId: Datatypes.PatientId, correlationId: Datatypes.CorrelationId†): Datatypes.SensorDataPackage` — synchronous with timeout sized inside the 3-min UC9 initiation budget
             - effect: Synchronously asks the patient gateway to push the current sensor reading; bounded by the commander timeout sized inside the 3-min UC9 initiation budget.
@@ -359,13 +364,15 @@ existing interfaces reused verbatim from rationale PDF §E.3
 #### SensorDataMgmt
 
 - `SensorDataMgmt`
-    - provided by: `PatientDataService` (was OtherFunctionality)
+    - provided by: `P1PatientDataService` (via `P1SensorIngestModule`; was OtherFunctionality)
     - required by:
         - `ClinicalJobCreator`
         - `RiskEstimationScheduler` (per §E.3.23)
-        - `PhysicianCommandService` (UC9 — calls `addSensorData(..., triggerEstimation=false)` after gateway fetch)
+        - `Av2DataIngestionService`
+        - `P1PhysicianCommandService` (UC9 — stores fetched gateway data after the on-demand sensor fetch)
+        - `P1OnDemandConsultationHandler` (internal UC9 caller within P1PhysicianCommandService)
     - operations (all `+`):
-        - `addSensorData(patientId: Datatypes.PatientId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp, triggerEstimation: boolean = true)` — §E.3.23 plus the new optional `triggerEstimation` flag (default `true` preserves legacy behaviour; UC9 passes `false`)
+        - `addSensorData(patientId: Datatypes.PatientId, sensorData: Datatypes.SensorDataPackage, receivedAt: Datatypes.Timestamp)` — §E.3.23, unchanged signature in the current VP model (see note below).
             - effect: Store the given sensor data and meta-data.
         - `getAllSensorDataOfPatient(patientId: Datatypes.PatientId): Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — §E.3.23 (Map instead of list)
             - effect: This will fetch and return all sensor data belonging to the patient identified by patientId
@@ -373,51 +380,52 @@ existing interfaces reused verbatim from rationale PDF §E.3
         - `getAllSensorDataOfPatientBefore(patientId: Datatypes.PatientId, before: Datatypes.Timestamp): Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — §E.3.23 (Map instead of list)
             - effect: Fetch and return all sensor data belonging to the patient identified by patientId which was received before the specified time stopTime.
             - returns: The sensor data and the timestamp of their arrival in the system.
-    - purpose: append/query raw sensor data; ingest write path with optional trigger of the risk pipeline
+    - purpose: append/query raw sensor data; ingest write path
+    - **open**: the current VP model (report E.3.75) does NOT have the `triggerEstimation` flag the design assumed. Without it, the UC9 path either fires a redundant scheduled risk job (foot-gun, §4 sensitivity #7) or has to use a separate "store-without-trigger" entry point. Decision needed — add the param, add a second operation, or accept the redundant job.
 
 #### PatientRecordMgmt
 
 - `PatientRecordMgmt`
-    - provided by: `PatientDataService` (was OtherFunctionality)
+    - provided by: `P1PatientDataService` (via `P1EHRProxyModule`; was OtherFunctionality)
     - required by:
         - `RiskEstimationCombiner` (UC16 reads per §E.3.20)
-        - `PhysicianCommandService` (UC8/UC17 writes via the new `updatePatientRecord` operation)
+        - `P1PhysicianCommandService` (UC8/UC17 writes via the new `updatePatientRecord` operation, via `P1RiskLevelHandler`)
     - operations (all `+`):
         - `getPatientRecord(patientId: Datatypes.PatientId): Datatypes.PatientRecord` — §E.3.20; stale-tolerant cached read fronted by EHRProxyModule
             - effect: This will fetch the EHR record of the patient with given id from the HIS and return it. If the HIS is not available, an older (cached) copy of the patient record is returned if possible.
             - returns: The PatientRecord fronted by the EHR cache.
-        - `updatePatientRecord(patientId: Datatypes.PatientId, record: Datatypes.PatientRecord)` — UC17 write (new op on §E.3.20); EHRProxyModule calls HISAdapter then invalidates its cache entry
-            - effect: Writes the patient record back to HIS via HISAdapter and invalidates the EHR cache entry so subsequent reads see the new value.
+        - `updatePatientRecord(patientId: Datatypes.PatientId, record: Datatypes.PatientRecord)` — UC17 write (new op on §E.3.20); P1EHRProxyModule calls P1HISAdapter then invalidates its cache entry
+            - effect: Writes the patient record back to HIS via P1HISAdapter and invalidates the EHR cache entry so subsequent reads see the new value.
     - purpose: EHR-proxy surface for record reads (UC16) and writes (UC8 / UC17)
 
 #### OtherDataMgmt
 
 - `OtherDataMgmt`
-    - provided by: `PatientDataService` (was OtherFunctionality)
+    - provided by: `P1PatientDataService` (via `P1PatientStatusModule`; was OtherFunctionality)
     - required by:
         - `ClinicalJobCreator`
         - `ClinicalModelCache`
         - `RiskEstimationCombiner`
         - `RiskEstimationScheduler` (per §E.3.19)
-        - `PatientStatusCache` (miss fallback)
+        - `P1PatientStatusCache` (miss fallback)
     - operations (all `+`, both from §E.3.19, unchanged):
         - `getPatientStatus(patientId: Datatypes.PatientId): Datatypes.PatientStatus`
             - effect: Fetch and return the status of the patient identified by the patientId.
             - returns: The patient's most recent persisted status.
-        - `setEstimatedPatientStatus(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus, timestamp: Datatypes.Timestamp)` — fires `IRiskEvents` when the stored status actually changes
+        - `setEstimatedPatientStatus(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus, timestamp: Datatypes.Timestamp)` — fires `P1IRiskEvents` when the stored status actually changes
             - effect: Update the patient status estimation of the patient identified by patientId to the given value estimatedStatus and update the time of estimation to estimationTime. The time of estimation is the time at which the corresponding estimation job for this patient was completed. If patient's estimated risk changed the appropriate parties are notified.
-    - purpose: patient-status read/write; `setEstimatedPatientStatus` is the IRiskEvents emission point
+    - purpose: patient-status read/write; `setEstimatedPatientStatus` is the P1IRiskEvents emission point
 
 #### LaunchRiskEstimation
 
 - `LaunchRiskEstimation`
     - provided by: `RiskEstimationScheduler` (extended — gains a priority/correlation parameter so UC9 jobs can jump ahead of scheduled ones; coordinate with teammate on Av2 since this touches their scheduler surface)
     - required by:
-        - `PatientDataService`.SensorIngestModule
-        - `PhysicianCommandService` (UC9 priority launch with correlationId)
+        - `P1PatientDataService` (via `P1SensorIngestModule`)
+        - `P1PhysicianCommandService` (UC9 priority launch with correlationId, via `P1OnDemandConsultationHandler`)
     - operations (all `+`):
-        - `launchRiskEstimation(patientId: Datatypes.PatientId, package: Datatypes.SensorDataPackage, timestamp: Datatypes.Timestamp, priority: Datatypes.Priority† = NORMAL, correlationId: Datatypes.CorrelationId†? = null)` — §E.3.11 plus two new optional parameters. `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets PhysicianCommandService match the eventual `IRiskEvents` event back to the originating UC9 request. Default values preserve legacy callers.
-            - effect: Submits a risk-estimation job for the patient against the supplied sensor data; the scheduler orders the job by `priority` (UC9 HIGH jumps ahead of scheduled jobs) and carries `correlationId` through to the resulting IRiskEvents event so subscribers can match it.
+        - `launchRiskEstimation(patientId: Datatypes.PatientId, newSensorData: Datatypes.SensorDataPackage, receivedAt: Datatypes.Timestamp, priority: Datatypes.Priority, correlationId: Datatypes.CorrelationId)` — §E.3.11 plus two new parameters (per report E.3.47, both required, not optional). `priority=HIGH` (above all three P2 tiers) for UC9; `correlationId` lets P1PhysicianCommandService match the eventual `P1IRiskEvents` event back to the originating UC9 request.
+            - effect: Submits a risk-estimation job for the patient against the supplied sensor data; the scheduler orders the job by `priority` (UC9 HIGH jumps ahead of scheduled jobs) and carries `correlationId` through to the resulting P1IRiskEvents event so subscribers can match it.
             - effect(original value) : The RiskEstimationScheduler will fetch the clinical models and their configurations associated to the patient identified by patientId from storage using the ClinicalModelCache, notify the RiskEstimationCombiner of the different jobs that will be performed for a single risk estimation and schedule the individual jobs in its queue. In normal modus, queued jobs are returned in FIFO order. In overload modus, the system switches to dynamic priority: earliest deadline first and enqueues jobs of patient with a high risk level with an earlier deadline (2 instead of 5 minutes) to prioritize them over patients with lower risk levels. The SensorDataPackage newSensorData is passed because its arrival triggered the risk estimation. A risk level is estimated based on the computation of these clinical models. For the computation of the clinical models, the given sensor data newSensorData (which is the new sensor data that was received) is used and other required data is fetched  from the respective databases if needed. The given time-stamp receivedAt is used in order to avoid fetching the new sensor data from the database. This time-stamp represents the time at which the new sensor data was received.
     - purpose: scheduler entry point; extended with priority + correlationId for UC9 priority launches
 
@@ -427,7 +435,7 @@ existing interfaces reused verbatim from rationale PDF §E.3
 - `ClinicalModelCacheMgmt`
     - provided by: `ClinicalModelCache` (unchanged)
     - required by:
-        - `PhysicianCommandService` (UC7 config change → cache invalidation)
+        - `P1PhysicianCommandService` (UC7 config change → cache invalidation, via `P1ConfigurationHandler`)
     - operations (`+`, unchanged from §E.3.3):
         - `invalidateCacheEntries(patientId: Datatypes.PatientId)` — removes all cached entries for a patient
             - effect: The ClinicalModelCache will invalidate (i.e., remove) all items in its cache for the patient identified by patientId. If the cache does not contain any items for this patient, nothing is changed. After invalidating the cached items for a certain patient, the next request for them will lead to fetching them from the database and storing them in the cache again.
@@ -438,215 +446,219 @@ existing interfaces reused verbatim from rationale PDF §E.3
 - `healthAPI`
     - provided by: `HIS` (external to eHealthPlatform, unchanged)
     - required by:
-        - `HISAdapter`
+        - `P1HISAdapter`
     - operations: unchanged from §E.3.8 (FHIR-derived: `getObservation`, `getPatient`, `getRiskAssessment`, `saveObservation`, `savePatient`, `saveRiskAssessment`, `deleteObservation`, `deletePatient`, `deleteRiskAssessment`, `searchObservation`, `searchPatient`, `searchRiskAssessment`). Signatures live in §E.3.8 — not reproduced here since P1 doesn't change them.
 
 ### 2c. Decomposed components
 
-> Each subsection below is a decomposition view (Conv. 5) for one parent component listed in §2a. Modules carry the `<<module>>` stereotype in VP. Internal interfaces (the ones with names like `IConfigCommand`, `IPriorityBuffer`, etc.) are defined in §2d and do not appear on the C&C diagram.
+> Each subsection below is a decomposition view (Conv. 5) for one parent component listed in §2a. Sub-elements carry the `<<module>>` stereotype in VP — they are design/implementation units (libraries, code groupings, in-process collaborators), not separate runtime processes. They live inside their parent component's process and share its memory. Internal interfaces (the ones with names like `P1IConfigCommand`, `P1IPriorityBuffer`, etc.) are defined in §2d and do not appear on the C&C diagram.
+>
+> Consequence of the `<<module>>` choice (per VP lab §4.4 + SAPlugin manual §4.2): modules don't get their own deployment rows — deploying the parent component deploys them transitively. Sequence diagrams that visualise internal flow use module lifelines only (Conv. 7, `[Diag.seq.04]`).
 
-#### PhysicianCommandService
+#### P1PhysicianCommandService
 
-- `decomposed` into modules (decomposition view — Conv. 5):
-    - `CommandRouter`
-        - description: provides IPhysicianCommand at the component boundary; thin dispatcher that routes each operation to the matching handler.
+- decomposed into modules (decomposition view — Conv. 5; per VP figs A.7, E.1.35–E.1.37, E.1.43, E.1.54):
+    - `P1CommandRouter`
+        - description: provides P1IPhysicianCommand at the component boundary; thin dispatcher that routes each operation to the matching handler.
         - provides:
-            - `IPhysicianCommand`
+            - `P1IPhysicianCommand`
         - requires:
-            - `IConfigCommand` (internal — UC7 → ConfigurationHandler)
-            - `IRiskLevelCommand` (internal — UC8 → RiskLevelHandler)
-            - `IOnDemandCommand` (internal — UC9 → OnDemandConsultationHandler)
-    - `ConfigurationHandler`
+            - `P1IConfigCommand` (internal — UC7 → P1ConfigurationHandler)
+            - `P1IRiskLevelCommand` (internal — UC8 → P1RiskLevelHandler)
+            - `P1IOnDemandCommand` (internal — UC9 → P1OnDemandConsultationHandler)
+    - `P1ConfigurationHandler`
         - description: UC7 — overwrites the per-patient ClinicalModelConfiguration, then invalidates the clinical-model cache.
         - provides:
-            - `IConfigCommand` (internal to PhysicianCommandService; consumed by CommandRouter)
+            - `P1IConfigCommand` (internal; consumed by P1CommandRouter)
         - requires:
-            - `ClinicalConfigMgmt`
+            - `P1ClinicalConfigMgmt`
             - `ClinicalModelCacheMgmt`
-    - `RiskLevelHandler`
-        - description: UC8 — writes the updated risk level via PatientRecordMgmt; the EHR forward is structural through EHRProxyModule.
+    - `P1RiskLevelHandler`
+        - description: UC8 — writes the updated risk level via PatientRecordMgmt; the EHR forward is structural through P1EHRProxyModule.
         - provides:
-            - `IRiskLevelCommand` (internal to PhysicianCommandService; consumed by CommandRouter)
+            - `P1IRiskLevelCommand` (internal; consumed by P1CommandRouter)
         - requires:
             - `PatientRecordMgmt`
-    - `OnDemandConsultationHandler`
-        - description: UC9 orchestration — mints a CorrelationId via CorrelationTracker, fetches sensor data, stores it with `triggerEstimation=false`, launches a priority risk job carrying the CorrelationId, then waits for the matching IRiskEvents.
+    - `P1OnDemandConsultationHandler`
+        - description: UC9 orchestration — mints a CorrelationId via P1CorrelationTracker, fetches sensor data, stores it (see §2b open question on `triggerEstimation`), launches a priority risk job carrying the CorrelationId, then waits for the matching P1IRiskEvents.
         - provides:
-            - `IOnDemandCommand` (internal to PhysicianCommandService; consumed by CommandRouter)
+            - `P1IOnDemandCommand` (internal; consumed by P1CommandRouter)
         - requires:
-            - `ICorrelationTracking` (internal — mints + resolves CorrelationIds)
-            - `IOnDemandSensorFetch`
+            - `P1ICorrelationTracking` (internal — mints + resolves CorrelationIds)
+            - `P1IOnDemandSensorFetch`
             - `SensorDataMgmt`
             - `LaunchRiskEstimation`
-            - `IRiskEvents`
-    - `CorrelationTracker`  <!-- [claude] makes §7 point #1 structural — Av2 must preserve this state across failover -->
+            - `P1IRiskEvents`
+    - `P1CorrelationTracker`  <!-- [claude] makes §7 point #1 structural — Av2 must preserve this state across failover -->
         - description: mints CorrelationIds for UC9 requests and matches incoming RiskEvents back to the originating handler; the single locus an Av2 failover must preserve so UC9 result delivery survives.
         - provides:
-            - `ICorrelationTracking` (internal to PhysicianCommandService; consumed by OnDemandConsultationHandler)
+            - `P1ICorrelationTracking` (internal; consumed by P1OnDemandConsultationHandler)
         - requires:
             - (none)
 
-#### NotificationDispatcher
+#### P1NotificationDispatcher
 
-- `decomposed` into modules (decomposition view — Conv. 5):
-    - `NotificationInboxModule`
-        - description: provides INotificationInbox at the component boundary; owns per-physician subscription state and the pull surface used by PhysicianGateway (getPendingNotifications / acknowledgeNotification).
+- decomposed into modules (decomposition view — Conv. 5; per VP fig A.5, E.1.38, E.1.42, E.1.51–E.1.53):
+    - `P1NotificationInboxModule`
+        - description: provides P1INotificationInbox at the component boundary; owns per-physician subscription state and the pull surface used by P1PhysicianGateway (getPendingNotifications / acknowledgeNotification).
         - provides:
-            - `INotificationInbox`
+            - `P1INotificationInbox`
         - requires:
-            - `IPriorityBuffer` (internal — peek/remove pending notifications for a physician)
-            - `INotificationLog` (internal — recover unacked red/yellow on startup; mark delivered after ack)
-            - `IRecipientRegistry` (internal — record subscribe/unsubscribe)
-    - `PriorityBuffer`  <!-- [claude] Response measure 5 + sensitivity #3 -->
+            - `P1IPriorityBuffer` (internal — peek/remove pending notifications for a physician)
+            - `P1INotificationLog` (internal — recover unacked red/yellow on startup; mark delivered after ack)
+            - `P1IRecipientRegistry` (internal — record subscribe/unsubscribe)
+    - `P1PriorityBuffer`  <!-- [claude] Response measure 5 + sensitivity #3 -->
         - description: in-memory priority queue (red > yellow > green); enforces the 100/min threshold and drops green first under overload.
         - provides:
-            - `IPriorityBuffer` (internal to NotificationDispatcher; written by RiskEventSubscriber, read by NotificationInboxModule)
+            - `P1IPriorityBuffer` (internal; written by P1RiskEventSubscriber, read by P1NotificationInboxModule)
         - requires:
             - (none)
-    - `DurableNotificationLog`  <!-- [claude] Response measure 5 "may not be lost" + Av2 seam §7 point #3 -->
-        - description: write-ahead log; red and yellow notifications are persisted here before being acked from IRiskEvents so they survive a crash.
+    - `P1DurableNotificationLog`  <!-- [claude] Response measure 5 "may not be lost" + Av2 seam §7 point #3 -->
+        - description: write-ahead log; red and yellow notifications are persisted here before being acked from P1IRiskEvents so they survive a crash.
         - provides:
-            - `INotificationLog` (internal to NotificationDispatcher; written by RiskEventSubscriber, read by NotificationInboxModule on recovery)
+            - `P1INotificationLog` (internal; written by P1RiskEventSubscriber, read by P1NotificationInboxModule on recovery)
         - requires:
             - (none)
-    - `RecipientRegistry`  <!-- [claude] resolves OQ1 — registry lives here as a module, not a separate component -->
-        - description: maps a patient-status event to the physicians who should be notified about it; UC5's "looks up the appropriate recipients" lives here. Populated via subscribeToNotifications on INotificationInbox.
+    - `P1RecipientRegistry`  <!-- [claude] resolves OQ1 — registry lives here as a module, not a separate top-level component -->
+        - description: maps a patient-status event to the physicians who should be notified about it; UC5's "looks up the appropriate recipients" lives here. Populated via subscribeToNotifications on P1INotificationInbox.
         - provides:
-            - `IRecipientRegistry` (internal to NotificationDispatcher; queried by RiskEventSubscriber, written by NotificationInboxModule on subscribe/unsubscribe)
+            - `P1IRecipientRegistry` (internal; queried by P1RiskEventSubscriber, written by P1NotificationInboxModule on subscribe/unsubscribe)
         - requires:
             - (none)
-    - `RiskEventSubscriber`  <!-- [claude] required-interface owner per Conv. 4; preserves §7 point #2's emission-point contract -->
-        - description: requires IRiskEvents at the component boundary; on event, queries RecipientRegistry, persists red/yellow to DurableNotificationLog, then enqueues to PriorityBuffer.
+    - `P1RiskEventSubscriber`  <!-- [claude] required-interface owner per Conv. 4; preserves §7 point #2's emission-point contract -->
+        - description: requires P1IRiskEvents at the component boundary; on event, queries P1RecipientRegistry, persists red/yellow to P1DurableNotificationLog, then enqueues to P1PriorityBuffer.
         - provides:
-            - (none — reacts to IRiskEvents push; no inbound calls from siblings)
+            - (none — reacts to P1IRiskEvents push; no inbound calls from siblings)
         - requires:
-            - `IRiskEvents`
-            - `IRecipientRegistry` (internal — UC5 recipient lookup)
-            - `INotificationLog` (internal — persist red/yellow before enqueue)
-            - `IPriorityBuffer` (internal — enqueue for dispatch)
+            - `P1IRiskEvents`
+            - `P1IRecipientRegistry` (internal — UC5 recipient lookup)
+            - `P1INotificationLog` (internal — persist red/yellow before enqueue)
+            - `P1IPriorityBuffer` (internal — enqueue for dispatch)
+- **note**: parent `P1NotificationDispatcher` also requires `Av2EmergencyDispatch` (per report E.1.41 / E.3.16). Per Conv. 5, at least one module must also declare the socket. `P1RiskEventSubscriber` is the natural owner (it's the module that reacts to events and decides whether to escalate via the emergency channel).
 
-#### PatientDataService
+#### P1PatientDataService
 
-- `decomposed` into modules (decomposition view — Conv. 5):
-    - **no internal interfaces** — the three modules are parallel (independent responsibilities, each tied to its own data store: sensor data, patient status, EHR cache); all collaboration is at the component boundary, so the decomposition diagram has no ball-and-socket connections between modules. Contrast with PhysicianCommandService and NotificationDispatcher decompositions, where modules collaborate internally.
-    - `SensorIngestModule`
-        - description: accepts and persists raw sensor data; triggers risk estimation unless caller opts out via `triggerEstimation=false` (used by UC9).
+- decomposed into modules (decomposition view — Conv. 5; per VP fig A.6, E.1.39, E.1.48, E.1.55):
+    - **no internal interfaces** — the three modules are parallel (independent responsibilities, each tied to its own data store: sensor data, patient status, EHR cache); all collaboration is at the component boundary, so the decomposition diagram has no ball-and-socket connections between them. Contrast with P1PhysicianCommandService and P1NotificationDispatcher decompositions, where modules collaborate internally.
+    - `P1SensorIngestModule`
+        - description: accepts and persists raw sensor data; triggers risk estimation on arrival. See §2b open question on `triggerEstimation` for the UC9 redundant-job issue.
         - provides:
             - `SensorDataMgmt`
         - requires:
             - `LaunchRiskEstimation`
-    - `PatientStatusModule`
-        - description: owns patient-status records; fires IRiskEvents when setEstimatedPatientStatus actually changes the stored status.
+    - `P1PatientStatusModule`
+        - description: owns patient-status records; fires P1IRiskEvents when setEstimatedPatientStatus actually changes the stored status.
         - provides:
             - `OtherDataMgmt`
-            - `IRiskEvents`
+            - `P1IRiskEvents`
         - requires:
             - (none)
-    - `EHRProxyModule`  <!-- [claude] handles both reads and writes against HIS so cache invalidation is structural -->
+    - `P1EHRProxyModule`  <!-- [claude] handles both reads and writes against HIS so cache invalidation is structural -->
         - description: fronts HIS for EHR reads and writes via PatientRecordMgmt; stale-tolerant cache on reads, invalidated structurally on writes.
         - provides:
             - `PatientRecordMgmt`
         - requires:
-            - `IHISAccess`
+            - `P1IHISAccess`
 
 ### 2d. Internal interfaces
 
-> These interfaces exist purely inside a single component's decomposition view (see §2c). They do **not** appear on the C&C diagram and have no direct callers from outside their parent component. They are listed here so that each module-to-module call in §2c has a backing required interface per Conv. 3 and Conv. 6.
+> These interfaces exist purely inside a single component's decomposition view (see §2c). They do **not** appear on the C&C diagram and have no direct callers from outside their parent component. They are listed here so each module-to-module call in §2c has a backing required interface per Conv. 3 and Conv. 6.
 
-PhysicianCommandService — internal interfaces
+P1PhysicianCommandService — internal interfaces
 
-#### IConfigCommand
+#### P1IConfigCommand
 
-- `IConfigCommand`
-    - provided by: `ConfigurationHandler` (module of PhysicianCommandService)
+- `P1IConfigCommand`
+    - provided by: `P1ConfigurationHandler` (module of P1PhysicianCommandService)
     - required by:
-        - `CommandRouter` (module of PhysicianCommandService)
+        - `P1CommandRouter` (module of P1PhysicianCommandService)
     - operations (all `+`):
-        - `configurePatientRiskAssessment(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7 delegation; mirrors the same op on IPhysicianCommand
-            - effect: Internal delegate — CommandRouter forwards the UC7 request to ConfigurationHandler, which writes the config and triggers the cache invalidation.
-    - purpose: internal — CommandRouter → ConfigurationHandler delegation for UC7
+        - `configurePatientRiskAssessment(patientId: Datatypes.PatientId, config: Datatypes.ClinicalModelConfiguration)` — UC7 delegation; mirrors the same op on P1IPhysicianCommand
+            - effect: Internal delegate — P1CommandRouter forwards the UC7 request to P1ConfigurationHandler, which writes the config and triggers the cache invalidation.
+    - purpose: internal — P1CommandRouter → P1ConfigurationHandler delegation for UC7
 
-#### IRiskLevelCommand
+#### P1IRiskLevelCommand
 
-- `IRiskLevelCommand`
-    - provided by: `RiskLevelHandler` (module of PhysicianCommandService)
+- `P1IRiskLevelCommand`
+    - provided by: `P1RiskLevelHandler` (module of P1PhysicianCommandService)
     - required by:
-        - `CommandRouter` (module of PhysicianCommandService)
+        - `P1CommandRouter` (module of P1PhysicianCommandService)
     - operations (all `+`):
-        - `updatePatientRiskLevel(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus)` — UC8 delegation; mirrors the same op on IPhysicianCommand
-            - effect: Internal delegate — CommandRouter forwards the UC8 request to RiskLevelHandler, which writes the new risk level via PatientRecordMgmt.
-    - purpose: internal — CommandRouter → RiskLevelHandler delegation for UC8
+        - `updatePatientRiskLevel(patientId: Datatypes.PatientId, status: Datatypes.PatientStatus)` — UC8 delegation; mirrors the same op on P1IPhysicianCommand
+            - effect: Internal delegate — P1CommandRouter forwards the UC8 request to P1RiskLevelHandler, which writes the new risk level via PatientRecordMgmt.
+    - purpose: internal — P1CommandRouter → P1RiskLevelHandler delegation for UC8
 
-#### IOnDemandCommand
+#### P1IOnDemandCommand
 
-- `IOnDemandCommand`
-    - provided by: `OnDemandConsultationHandler` (module of PhysicianCommandService)
+- `P1IOnDemandCommand`
+    - provided by: `P1OnDemandConsultationHandler` (module of P1PhysicianCommandService)
     - required by:
-        - `CommandRouter` (module of PhysicianCommandService)
+        - `P1CommandRouter` (module of P1PhysicianCommandService)
     - operations (all `+`):
-        - `requestOnDemandConsultation(patientId: Datatypes.PatientId): Datatypes.ConsultationId†` — UC9 delegation; mirrors the same op on IPhysicianCommand
-            - effect: Internal delegate — CommandRouter forwards the UC9 request to OnDemandConsultationHandler, which mints a CorrelationId, fetches sensor data, launches a priority risk job, and awaits the matching event.
+        - `requestOnDemandConsultation(patientId: Datatypes.PatientId): Datatypes.ConsultationId†` — UC9 delegation; mirrors the same op on P1IPhysicianCommand
+            - effect: Internal delegate — P1CommandRouter forwards the UC9 request to P1OnDemandConsultationHandler, which mints a CorrelationId, fetches sensor data, launches a priority risk job, and awaits the matching event.
             - returns: The ConsultationId minted for this UC9 request.
-    - purpose: internal — CommandRouter → OnDemandConsultationHandler delegation for UC9
+    - purpose: internal — P1CommandRouter → P1OnDemandConsultationHandler delegation for UC9
+    - note: per report E.6, `ConsultationId` carries the comment "TODO maybe delete/merge into CorrelationId" — decide whether to keep two distinct types or collapse.
 
-#### ICorrelationTracking
+#### P1ICorrelationTracking
 
-- `ICorrelationTracking`  <!-- [claude] makes §7 point #1 (Av2 failover state) structural -->
-    - provided by: `CorrelationTracker` (module of PhysicianCommandService)
+- `P1ICorrelationTracking`  <!-- [claude] makes §7 point #1 (Av2 failover state) structural -->
+    - provided by: `P1CorrelationTracker` (module of P1PhysicianCommandService)
     - required by:
-        - `OnDemandConsultationHandler` (module of PhysicianCommandService)
+        - `P1OnDemandConsultationHandler` (module of P1PhysicianCommandService)
     - operations (all `+`):
         - `newCorrelationId(): Datatypes.CorrelationId†` — mints a fresh CorrelationId and records it as pending
-            - effect: Mints a fresh CorrelationId and records it in the pending set so a future IRiskEvents can be matched back to this UC9 request.
+            - effect: Mints a fresh CorrelationId and records it in the pending set so a future P1IRiskEvents can be matched back to this UC9 request.
             - returns: The freshly minted CorrelationId.
-        - `consumeCorrelation(correlationId: Datatypes.CorrelationId†): boolean` — returns true if the CorrelationId was pending (and removes it); called by OnDemandConsultationHandler when an IRiskEvents arrives, to decide whether the event matches a pending UC9
+        - `consumeCorrelation(correlationId: Datatypes.CorrelationId†): boolean` — returns true if the CorrelationId was pending (and removes it); called by P1OnDemandConsultationHandler when a P1IRiskEvents arrives, to decide whether the event matches a pending UC9
             - effect: Resolves a CorrelationId by removing it from the pending set if present; reports whether the event matches a tracked UC9 request.
             - returns: True if the CorrelationId was pending (and has now been consumed); false otherwise.
     - purpose: internal — CorrelationId minting and matching for UC9 result delivery (Av2 failover state lives here per §7 point #1)
 
-NotificationDispatcher — internal interfaces
+P1NotificationDispatcher — internal interfaces
 
-#### IPriorityBuffer
+#### P1IPriorityBuffer
 
-- `IPriorityBuffer`
-    - provided by: `PriorityBuffer` (module of NotificationDispatcher)
+- `P1IPriorityBuffer`
+    - provided by: `P1PriorityBuffer` (module of P1NotificationDispatcher)
     - required by:
-        - `RiskEventSubscriber` (module of NotificationDispatcher; write side — enqueue)
-        - `NotificationInboxModule` (module of NotificationDispatcher; read side — peek/remove)
+        - `P1RiskEventSubscriber` (write side — enqueue)
+        - `P1NotificationInboxModule` (read side — peek/remove)
     - operations (all `+`):
         - `enqueue(physicianId: Datatypes.PhysicianId†, notification: Datatypes.Notification†)` — adds a pending notification for a specific physician; severity drives priority + drop-green-first overload policy (Response measure 5)
             - effect: Adds the notification to the physician's pending set; severity drives priority ordering and the drop-green-first policy when the 100/min threshold is exceeded.
         - `peekPending(physicianId: Datatypes.PhysicianId†): List<Datatypes.Notification†>` — returns pending notifications for a physician, in priority order; called from getPendingNotifications
             - effect: Returns the physician's pending notifications in priority order (red > yellow > green) without removing them from the buffer.
             - returns: The list of pending Notifications for the physician, ordered by severity then arrival.
-        - `removePending(notificationId: Datatypes.NotificationId†)` — removes a notification after the physician acks it via INotificationInbox.acknowledgeNotification
-            - effect: Removes the notification from the buffer after the physician acks it through INotificationInbox.
+        - `removePending(notificationId: Datatypes.NotificationId†)` — removes a notification after the physician acks it via P1INotificationInbox.acknowledgeNotification
+            - effect: Removes the notification from the buffer after the physician acks it through P1INotificationInbox.
     - purpose: internal — priority-ordered notification buffer (red > yellow > green) with drop-green-first overload policy
 
-#### INotificationLog
+#### P1INotificationLog
 
-- `INotificationLog`  <!-- [claude] backs Response measure 5 "may not be lost" -->
-    - provided by: `DurableNotificationLog` (module of NotificationDispatcher)
+- `P1INotificationLog`  <!-- [claude] backs Response measure 5 "may not be lost" -->
+    - provided by: `P1DurableNotificationLog` (module of P1NotificationDispatcher)
     - required by:
-        - `RiskEventSubscriber` (module of NotificationDispatcher; persist before enqueue)
-        - `NotificationInboxModule` (module of NotificationDispatcher; mark delivered + recover on startup)
+        - `P1RiskEventSubscriber` (persist before enqueue)
+        - `P1NotificationInboxModule` (mark delivered + recover on startup)
     - operations (all `+`):
         - `persist(notification: Datatypes.Notification†)` — write-ahead log entry for red/yellow notifications before they enter the buffer; survives a crash
             - effect: Writes the notification to the durable log before it enters the in-memory buffer so a crash cannot lose a red or yellow notification.
         - `markDelivered(notificationId: Datatypes.NotificationId†)` — removes from log after physician ack so storage doesn't grow unbounded
             - effect: Removes the notification from the durable log once the physician has acked delivery, bounding storage growth.
-        - `recoverPending(): List<Datatypes.Notification†>` — on startup, returns notifications that were persisted but never acked; NotificationInboxModule replays them into the buffer
-            - effect: On startup, returns notifications that were persisted but never acked so NotificationInboxModule can replay them into the priority buffer.
+        - `recoverPending(): List<Datatypes.Notification†>` — on startup, returns notifications that were persisted but never acked; P1NotificationInboxModule replays them into the buffer
+            - effect: On startup, returns notifications that were persisted but never acked so P1NotificationInboxModule can replay them into the priority buffer.
             - returns: The list of unacked Notifications recovered from the durable log.
     - purpose: internal — durable write-ahead log so red/yellow notifications survive a crash (Response measure 5)
 
-#### IRecipientRegistry
+#### P1IRecipientRegistry
 
-- `IRecipientRegistry`  <!-- [claude] resolves OQ1 structurally -->
-    - provided by: `RecipientRegistry` (module of NotificationDispatcher)
+- `P1IRecipientRegistry`  <!-- [claude] resolves OQ1 structurally -->
+    - provided by: `P1RecipientRegistry` (module of P1NotificationDispatcher)
     - required by:
-        - `NotificationInboxModule` (module of NotificationDispatcher; subscribe/unsubscribe writes from INotificationInbox)
-        - `RiskEventSubscriber` (module of NotificationDispatcher; UC5 recipient lookup on each event)
+        - `P1NotificationInboxModule` (subscribe/unsubscribe writes from P1INotificationInbox)
+        - `P1RiskEventSubscriber` (UC5 recipient lookup on each event)
     - operations (all `+`):
         - `subscribe(physicianId: Datatypes.PhysicianId†)` — register a physician to receive notifications
             - effect: Adds the physician to the notification recipient set.
@@ -657,26 +669,27 @@ NotificationDispatcher — internal interfaces
             - returns: The list of PhysicianIds subscribed to events for this patient.
     - purpose: internal — physician↔patient subscription registry used for UC5 recipient lookup
 
-### 2e. Deployment changes
+### 2e. Deployment (per report C.1–C.4)
 
-I only did primary diagram of the client server view, this is fine for now, will move on to other diagrams later
+The VP model has primary (C.2), pilot (C.3), and dev (C.4) deployments wired. Summary of where the P1 components actually sit:
 
-<!-- [claude] Sketch for when you do get to deployment (needed for §3b and Conv. 8):
+- **PhysicianNode** (report E.4.26): `P1PhysicianGateway`, `P1PhysicianCommandService` (its 5 modules ride along), `P1PatientQueryService`, `P1NotificationDispatcher` (its 5 modules ride along), `P1PatientGatewayCommander`.
+- **PhysicianWorkstation** (report E.4.28): `P1PhysicianGateway` is also placed on the physician's own machine in the C.1 context view.
+- **PatientDataNode** (report E.4.20): `P1PatientDataService` (its 3 modules ride along), `P1PatientStatusCache`, `P1HISAdapter`.
+- **TODONode / TODO Node (Pilot)** (report E.4.37/38): `OtherFunctionality`, `ClinicalModelDB` — both still here (intended to be retired/relocated later).
+- **RiskEstimationMgmtNode** (report E.4.31): unchanged — `RiskEstimationScheduler`, `RiskEstimationCombiner`, `ClinicalJobCreator`, `ClinicalModelCache`, plus `MLModelManager`.
+- **MonitoringNode**, **BackendGatewayNode**, **PatientRecordsNode**: Av2 territory.
 
-- **eHealthPlatform** (existing parent node) gains two new physical nodes and drops TODONode:
-  - **PhysicianAccessNode** (new): PhysicianGateway, PhysicianCommandService, PatientQueryService, PatientStatusCache, NotificationDispatcher, PatientGatewayCommander.  <!-- [claude] HISAdapter no longer here (moved to PatientDataNode); PatientGatewayCommander added for UC9 outbound fetch. -->
-  - **PatientDataNode** (new): PatientDataService, ClinicalModelDB, HISAdapter.
-  - TODONode: retired.
-- Communication paths (Conv. 9):
-  - PhysicianAccessNode ↔ PatientDataNode (PatientStatusCache → OtherDataMgmt for miss fallback; PhysicianCommandService → PatientRecordMgmt for UC8/UC17 writes; PhysicianCommandService → SensorDataMgmt for UC9 fetched data; PhysicianCommandService → ClinicalConfigMgmt on UC7)  <!-- [claude] ClinicalConfigMgmt is on ClinicalModelDB which lives on PatientDataNode. -->
-  - PhysicianAccessNode ↔ RiskEstimationMgmtNode (PhysicianCommandService → LaunchRiskEstimation with priority+correlation; NotificationDispatcher ← IRiskEvents; PhysicianCommandService ← IRiskEvents; PhysicianCommandService → ClinicalModelCacheMgmt for UC7 invalidation)  <!-- [claude] ClinicalModelCacheMgmt is on ClinicalModelCache; per §E.1.2 the cache is sited close to RiskEstimationProcessor/Combiner — assumed to deploy on RiskEstimationMgmtNode post-TODONode-retirement (verify when wiring the deployment view). -->
-  - PatientDataNode ↔ RiskEstimationMgmtNode (PatientDataService → LaunchRiskEstimation; PatientDataService.PatientStatusModule ← PatientRecordMgmt callbacks from RiskEstimationCombiner)
-  - PatientDataNode ↔ RiskEstimationProcessorNode (SensorDataMgmt and OtherDataMgmt are pulled by ClinicalJobCreator which lives on RiskEstimationMgmtNode actually — double-check in figure C.2)
-  - PatientDataNode → HIS (external, via healthAPI on HISAdapter)
-  - **PhysicianAccessNode → patient gateway (external, via patientGatewayAPI on PatientGatewayCommander)**  <!-- [claude] new path for UC9: outbound request to the patient gateway. The reply (sensor data) is fed back into SensorDataMgmt by PhysicianCommandService, so no separate inbound path is needed beyond the existing UC4 channel. -->
+Communication paths visible in the deployment views (Conv. 9):
 
-The point of the split: **PhysicianAccessNode has its own CPU/memory/threads.** A surge of 25 status queries + 100 notifications/min stays inside this node. Sensor data and risk jobs don't pass through it. That's what makes Response item 6 (no impact on ingress / risk estimation) defensible.
--->
+- PhysicianNode ↔ PatientDataNode — UC6 status reads (`P1PatientQueryService` → `P1IPatientStatusRead` on `P1PatientStatusCache`); UC8/UC17 EHR writes (`P1PhysicianCommandService` → `PatientRecordMgmt`); UC9 fetched-data writes (`P1PhysicianCommandService` → `SensorDataMgmt`).
+- PhysicianNode ↔ RiskEstimationMgmtNode — `P1PhysicianCommandService` → `LaunchRiskEstimation` with priority+correlation; `P1NotificationDispatcher` ← `P1IRiskEvents`; `P1PhysicianCommandService` ← `P1IRiskEvents`; `P1PhysicianCommandService` → `ClinicalModelCacheMgmt` for UC7 invalidation.
+- PhysicianNode ↔ TODONode — `P1PhysicianCommandService` → `P1ClinicalConfigMgmt` on `ClinicalModelDB` for UC7 writes (because ClinicalModelDB still sits on TODONode).
+- PatientDataNode ↔ RiskEstimationMgmtNode — `P1PatientDataService` → `LaunchRiskEstimation`; `RiskEstimationCombiner` → `PatientRecordMgmt` / `OtherDataMgmt` callbacks.
+- PatientDataNode → HIS (external) — via `healthAPI` on `P1HISAdapter`.
+- PhysicianNode → patient gateway (external, UC9) — design intent; not yet wired (see §2a `P1PatientGatewayCommander` note).
+
+The point of the split: **PhysicianNode has its own CPU/memory/threads.** A surge of physician traffic stays inside that node and the cross-node calls into PatientDataNode. Sensor data and risk jobs don't pass through PhysicianNode. That's what makes Response item 6 (no impact on ingress / risk estimation) defensible — see updated §3b.
 
 ---
 
@@ -685,64 +698,78 @@ The point of the split: **PhysicianAccessNode has its own CPU/memory/threads.** 
 ### 3a. The 2s response-measure budget
 
 [claude] The 2s ceiling for high-risk queries (Response measure 1) is generous — the real
-constraint is **tiered SLAs** under contention. Budget for the *worst* case (cache miss):
+constraint is **tiered SLAs** under contention. With `P1PatientStatusCache` co-located with
+`P1PatientDataService` on `PatientDataNode` (per VP model), the worst case is one cross-node
+hop into PatientDataNode and then a same-node miss-fallback inside it.
 
 | Hop | Estimated | Note |
 | --- | --- | --- |
-| Network in (physician client → PhysicianGateway) | ~50 ms | TLS-terminated REST/gRPC |
-| PhysicianGateway route + auth | ~10 ms | thin router |
-| PatientQueryService dequeue (priority: high) | ~20 ms | bounded queue, head-of-line for high-risk |
-| PatientStatusCache lookup (miss) | ~10 ms | |
-| Cross-node call → PatientDataService.PatientRecordModule | ~30 ms | LAN within eHealthPlatform |
-| Store read (indexed by patientId) | ~50 ms | |
-| Return to cache + populate | ~10 ms | |
-| Serialize + network out | ~50 ms | |
-| **Total (cache miss)** | **~230 ms** | well under 2 s; ~1.7 s slack |
-| **Total (cache hit)** | **~150 ms** | |
+| Network in (physician client → P1PhysicianGateway) | ~50 ms | TLS-terminated REST/gRPC |
+| P1PhysicianGateway route | ~10 ms | thin router |
+| P1PatientQueryService dequeue (priority: high) | ~20 ms | bounded queue, head-of-line for high-risk |
+| Cross-node call → P1PatientStatusCache (on PatientDataNode) | ~30 ms | LAN within eHealthPlatform |
+| Cache lookup (hit) | ~5 ms | |
+| Cache lookup (miss) + same-node OtherDataMgmt read | ~50 ms | local fall-through, no extra network hop |
+| Return + serialize | ~50 ms | |
+| **Total (cache hit)** | **~165 ms** | |
+| **Total (cache miss)** | **~210 ms** | well under 2 s; ~1.8 s slack |
 
 The slack matters: under load, the priority queue ensures high-risk requests jump ahead;
-medium-risk get up to 5 s (room for queueing) and low-risk up to 10 s (more queueing). The
-cache is what keeps the **average** path far below the SLA — without it, a flood of cache
-misses against the store would saturate the cross-node link.
+medium-risk get up to 5 s, low-risk up to 10 s. Because the cache is on PatientDataNode the
+miss path is one *local* read rather than another network hop — cheap, but means a flood of
+queries always goes cross-node first (the cache no longer absorbs read load on the physician
+side, only on the data side). See §3b for the consequences for Response item 6.
 
 **Other response measures (rougher numbers):**
 
-- **UC8 risk-level update + 1-min EHR forward**: write path PhysicianGateway → PhysicianCommandService → PatientRecordMgmt.updatePatientRecord (cross-node to PatientDataNode, ~30 ms) → EHRProxyModule (cache invalidate + same-node HISAdapter call). HIS round-trip dominates; even at multi-second HIS latency, total stays well under the 60 s SLA. Cache coherence is structural — any subsequent UC16 read from RiskEstimationCombiner sees the new value.
-- **UC9 on-demand consultation, 3-min init**: PhysicianCommandService mints a correlationId, calls `IOnDemandSensorFetch` (PatientGatewayCommander → patient gateway, sync round-trip — typically a few seconds, bounded by the commander timeout). On reply: writes the package via `SensorDataMgmt.addSensorData(..., triggerEstimation=false)` so the data is stored *without* triggering an estimation, then calls `LaunchRiskEstimation(priority=high, correlationId)`. The scheduler must honour this priority over scheduled jobs (couples to Av/P2 design — coordinate with teammate).
-- **UC9 result delivery in 1 min**: PhysicianCommandService subscribes to `IRiskEvents` filtered by correlationId; pushes result back to physician via long-poll or websocket on `INotificationInbox`.
-- **UC5 100 notifications/min**: NotificationDispatcher priority queue. Red bypasses everything (10 s SLA). Green can queue up to 60 s. Under overload, green is dropped first; red/yellow are persisted to disk before being acked from `IRiskEvents` so they cannot be lost.
+- **UC8 risk-level update + 1-min EHR forward**: write path P1PhysicianGateway → P1PhysicianCommandService → PatientRecordMgmt.updatePatientRecord (cross-node to PatientDataNode, ~30 ms) → P1EHRProxyModule (cache invalidate + same-node P1HISAdapter call). HIS round-trip dominates; even at multi-second HIS latency, total stays well under the 60 s SLA. Cache coherence is structural — any subsequent UC16 read from RiskEstimationCombiner sees the new value.
+- **UC9 on-demand consultation, 3-min init**: P1PhysicianCommandService mints a correlationId, calls `P1IOnDemandSensorFetch` (P1PatientGatewayCommander → patient gateway, sync round-trip — typically a few seconds, bounded by the commander timeout). On reply: writes the package via `SensorDataMgmt.addSensorData(...)` and calls `LaunchRiskEstimation(priority=HIGH, correlationId)`. **Open**: the current VP `addSensorData` has no `triggerEstimation` flag (§2b note), so a redundant scheduled risk job may fire on top of the priority UC9 one until that is resolved.
+- **UC9 result delivery in 1 min**: P1PhysicianCommandService subscribes to `P1IRiskEvents` filtered by correlationId; pushes result back to physician via long-poll or websocket on `P1INotificationInbox`.
+- **UC5 100 notifications/min**: P1NotificationDispatcher priority queue. Red bypasses everything (10 s SLA). Green can queue up to 60 s. Under overload, green is dropped first; red/yellow are persisted to `P1DurableNotificationLog` before being acked from `P1IRiskEvents` so they cannot be lost. Red also has access to the Av2 emergency backup channel via the new `Av2EmergencyDispatch` requirement.
 
 
 ### 3b. The "no impact on ingress" argument
 
-[claude] Response item 6 is the strongest constraint in the QAS. The argument has three legs:
+[claude] Response item 6 is the strongest constraint in the QAS. With the current VP layout
+(cache on PatientDataNode, not PhysicianNode), the argument has three legs:
 
-1. **Resource separation by node.** PhysicianAccessNode and PatientDataNode are physically
-   separate nodes (Conv. 8/9). The CPU, memory, network stack, OS schedulers used by
-   PhysicianGateway + the five physician-side services are disjoint from those used by the
-   sensor-ingest path (PatientDataService on PatientDataNode) and the risk-estimation pipeline
-   (RiskEstimationMgmtNode, RiskEstimationProcessorNode). A spike in physician traffic
-   consumes PhysicianAccessNode resources only.
+1. **Resource separation by node.** PhysicianNode and the risk-estimation tier
+   (RiskEstimationMgmtNode + RiskEstimationProcessorNode) are physically separate nodes
+   (Conv. 8/9). A spike in physician traffic consumes PhysicianNode resources only; it does
+   not contend with the risk-estimation processors or the scheduler.
 
-2. **No synchronous calls into the risk pipeline from the physician side.** `IRiskEvents` is
-   **push** (decision recorded in §2b). NotificationDispatcher and PhysicianCommandService
-   subscribe; they never poll or query RiskEstimationCombiner. Therefore a notification storm
+2. **No synchronous calls into the risk pipeline from the physician side.** `P1IRiskEvents` is
+   **push** (decision recorded in §2b). `P1NotificationDispatcher` and `P1PhysicianCommandService`
+   subscribe; they never poll or query `RiskEstimationCombiner`. Therefore a notification storm
    does not generate any incoming load on the risk pipeline.
 
-3. **Bounded cross-node read load.** The dominant data flow from PhysicianAccessNode toward the
-   ingest/store side is PatientStatusCache → OtherDataMgmt on cache miss. The cache pins
-   high-risk patient records (the hottest ones) and uses a write-through invalidation policy
-   so cross-node traffic is bounded by the *change* rate, not the *query* rate. A flood of
-   physician queries hitting the same handful of high-risk patients translates to ~0
-   cross-node calls after warm-up.
+3. **Bounded cross-node read load *on the data path*.** Every UC6 query goes cross-node into
+   PatientDataNode (cache lives there). The cache absorbs the second-level load against
+   `OtherDataMgmt` — i.e., the cache protects the **data store**, not the network link. So:
+   PhysicianNode → PatientDataNode bandwidth scales with the *query* rate (≤25/min per QAS,
+   bounded). The cache then keeps PatientDataNode's CPU off the slow `OtherDataMgmt` path on
+   repeated reads.
 
-The residual cross-node writes from PhysicianCommandService (UC7 config to ClinicalModelDB,
+The residual cross-node writes from P1PhysicianCommandService (UC7 config to ClinicalModelDB,
 UC8/UC17 EHR write via PatientRecordMgmt, UC9 fetched-data write via SensorDataMgmt) DO touch
-PatientDataNode. Mitigation: these rates are bounded by the QAS itself (≤25 + 20 + 20 + 20
-per minute — UC6/7/8/9 combined) — orders of magnitude below the sensor-ingest write rate, so
-they add negligible load. Crucially, the UC9 `addSensorData` call uses `triggerEstimation=false`
-so it does NOT fan out into a redundant risk job on top of the priority one PhysicianCommandService
-explicitly launches.
+PatientDataNode (and TODONode in the case of UC7, since ClinicalModelDB still lives there).
+Mitigation: these rates are bounded by the QAS itself (≤25 + 20 + 20 + 20 per minute —
+UC6/7/8/9 combined) — orders of magnitude below the sensor-ingest write rate, so they add
+negligible load.
+
+**Caveat from the cache-on-PatientDataNode placement**: with the cache co-located with
+`P1PatientDataService`, a flood of physician reads still consumes PatientDataNode CPU
+(at least for the cache lookup + serialization). That node also handles sensor ingest
+(via `SensorDataMgmt`). The non-interference guarantee for ingress therefore relies on the
+cache being cheap enough that physician-driven load on PatientDataNode stays well below
+ingest-driven load. If that ever flips, this leg of the argument weakens — flagged in §4
+sensitivity #1 and #4.
+
+**Caveat on UC9**: the current VP model lacks `triggerEstimation=false` on `addSensorData`,
+so until that is added the UC9 path fires *two* risk jobs (the implicit one from
+`P1SensorIngestModule` plus the priority one P1PhysicianCommandService explicitly launches).
+That doubles load on `RiskEstimationScheduler` for on-demand traffic and partially
+undermines leg #1 for the UC9 case. See §4 sensitivity #7.
 
 ---
 
@@ -750,30 +777,34 @@ explicitly launches.
 
 [claude] The decisions where a small parameter change swings P1 a lot:
 
-1. **PatientStatusCache hit ratio for high-risk patients.** If pinning policy fails or the
-   working set grows, cache misses spike and cross-node traffic dominates — high-risk SLA
-   tightens fast (the 2 s margin is large but degrades non-linearly under load).
-2. **Push-vs-pull on IRiskEvents.** Flipping this from push to pull (e.g., NotificationDispatcher
+1. **P1PatientStatusCache hit ratio + its placement on PatientDataNode.** If the cache hit
+   ratio drops, every UC6 read hits `OtherDataMgmt` on the same node. Because the cache lives
+   on PatientDataNode, miss traffic stays local — but the *cross-node* request volume from
+   PhysicianNode is already proportional to the query rate. Smaller margin than the earlier
+   design (cache on PhysicianNode) would have given.
+2. **Push-vs-pull on P1IRiskEvents.** Flipping this from push to pull (e.g., P1NotificationDispatcher
    polling for status changes) immediately violates Response item 6 — load on the risk
    pipeline becomes proportional to notification volume.
-3. **Priority-queue depth / drop policy in NotificationDispatcher.** Setting the threshold
+3. **Priority-queue depth / drop policy in P1NotificationDispatcher.** Setting the threshold
    for "overload" wrong (or letting green starve infinitely) breaks Response item 5.
-4. **Co-location of PatientDataService and the risk-estimation nodes.** If a future deployment
-   merges PatientDataNode with RiskEstimationMgmtNode for cost reasons, the non-interference
-   guarantee collapses.
-5. **PhysicianGateway thinness.** If anyone adds business logic to the gateway (auth caching,
+4. **Co-location of P1PatientDataService with P1PatientStatusCache on PatientDataNode.**
+   PatientDataNode now hosts both ingest-side data (`SensorDataMgmt`) and the physician-facing
+   cache. If physician read load on the cache ever grows comparable to ingest CPU, the
+   non-interference argument's third leg (§3b) weakens. This is the central trade-off
+   introduced by the report's cache placement.
+5. **P1PhysicianGateway thinness.** If anyone adds business logic to the gateway (auth caching,
    request aggregation, rate-limit math), it becomes a single CPU-bound chokepoint for all
    five UCs.
-6. **Patient gateway availability for UC9.** PatientGatewayCommander makes a synchronous
+6. **Patient gateway availability for UC9.** P1PatientGatewayCommander makes a synchronous
    outbound call to the patient gateway during UC9. If the gateway is offline or slow, the
    3-min initiation SLA is at risk before any PMS-internal work even begins. The commander's
-   timeout has to leave enough budget for a retry and for the subsequent priority risk job;
-   set it too generous and UC9 stalls, too tight and we falsely give up.
-7. **`triggerEstimation` discipline on `SensorDataMgmt.addSensorData`.** If a future caller
-   forgets to pass `triggerEstimation=false` from the UC9 path, every on-demand consultation
-   fires *two* risk jobs (the implicit one from SensorIngestModule plus the priority one
-   from PhysicianCommandService). Doubles the load on RiskEstimationScheduler for on-demand
-   traffic and could starve scheduled jobs. Worth a unit-test invariant.
+   timeout has to leave enough budget for a retry and for the subsequent priority risk job.
+7. **`triggerEstimation` discipline on `SensorDataMgmt.addSensorData`.** The current VP model
+   (report E.3.75) has **no** `triggerEstimation` parameter — so today every UC9 on-demand
+   consultation fires *two* risk jobs (the implicit one from P1SensorIngestModule plus the
+   priority one from P1PhysicianCommandService). Doubles the load on RiskEstimationScheduler
+   for on-demand traffic and could starve scheduled jobs. Resolve by adding the flag (or a
+   sibling "store-without-trigger" operation) in VP, then enforcing it at every UC9 call site.
 
 ---
 
@@ -783,9 +814,9 @@ explicitly launches.
 
 | Attribute | Impact | Why |
 | --- | --- | --- |
-| Modifiability | **−** moderate | 8 new components + 2 new nodes instead of 1 placeholder. Future changes to the physician-side API now ripple through Gateway + Service + (sometimes) Cache. Mitigated by clear seams between query/command/notification/outbound-fetch. |
-| Availability | **−** small | More moving parts → more failure modes. Specifically: PatientAccessNode is a single point of failure for *all* physician UCs (Av2's domain — flag for teammate). NotificationDispatcher buffering means red/yellow notifications must survive a crash (need persistent queue). |
-| Performance (other QASs) | **+** small | The split actually helps P2/M2: physician load no longer competes with risk-estimation throughput. |
+| Modifiability | **−** moderate | ~8 new top-level P1 components + 2 new nodes (PhysicianNode, PatientDataNode) plus the still-present TODONode. Future changes to the physician-side API ripple through Gateway + CommandRouter + handlers. Mitigated by clear seams between query / command / notification / outbound-fetch. |
+| Availability | **−** small | More moving parts → more failure modes. PhysicianNode is a single point of failure for *all* physician UCs (Av2's domain — flag for teammate). P1NotificationDispatcher buffering means red/yellow notifications must survive a crash — backed by P1DurableNotificationLog. |
+| Performance (other QASs) | **+** small | The split helps P2/M2: physician load no longer competes with risk-estimation throughput. Slightly less win than the original design intended because the cache is on PatientDataNode (shared with ingest), not isolated on the physician side. |
 | Cost / complexity | **−** moderate | Two new nodes to operate. Cross-node calls add latency budget pressure (manageable given the 2 s ceiling). |
 | Predictability | **+** | Resource isolation makes worst-case behaviour easier to reason about; non-interference is structural, not best-effort. |
 
@@ -802,23 +833,28 @@ point.
      Listing it here is better than skipping it — unknowns are the point. -->
 
 [claude]
-1. **Where does the notification recipient registry live?** UC5 says "looks up the appropriate
-   recipients" but there's no recipient store in the design. Options: a `RecipientRegistry`
-   module inside NotificationDispatcher, or a separate component on PatientDataNode. Affects
-   how UC8 risk-level updates trigger notifications.
-2. **How is PatientStatusCache populated initially / kept warm for high-risk patients?**
+1. ~~Where does the notification recipient registry live?~~ Resolved: `P1RecipientRegistry`
+   module inside `P1NotificationDispatcher` (report E.1.52).
+2. **How is P1PatientStatusCache populated initially / kept warm for high-risk patients?**
    Need a policy: write-through on `setEstimatedPatientStatus`? Background pre-warm of all
    high-risk patients on startup?
 3. **HIS integration auth model.** `healthAPI` is provided by an external HIS; how does
-   HISAdapter authenticate? Out-of-scope for P1 but blocks UC8's EHR forwarding deliverable.
+   `P1HISAdapter` authenticate? Out-of-scope for P1 but blocks UC8's EHR forwarding deliverable.
 4. **Patient gateway auth model for outbound PMS → gateway calls.** UC9 introduces a new
-   outbound direction (`patientGatewayAPI`). The existing inbound channel (UC4) authenticates
-   via the gateway's token. How does the *PMS* authenticate to the gateway? Mirror of OQ3
-   for HIS — out of P1 scope but blocks UC9 deliverable.
-5. **Should `triggerEstimation` be a parameter on `addSensorData` or two separate operations?**
-   Parameter is simpler but is a foot-gun (see sensitivity #7). Two operations
-   (`addSensorData`, `addSensorDataWithoutEstimation`) make the choice explicit at every
-   call site. Marginal — pick when wiring VP.
+   outbound direction. The existing inbound channel (UC4) authenticates via the gateway's
+   token. How does the *PMS* authenticate to the gateway? Mirror of OQ3 for HIS — out of
+   P1 scope but blocks UC9 deliverable. Currently the VP model has no required interface on
+   `P1PatientGatewayCommander` at all — pick a stub interface name and wire it.
+5. **`triggerEstimation` representation in VP.** The current model lacks any way to suppress
+   the implicit risk-estimation trigger from `addSensorData`. Options: add a flag parameter
+   (foot-gun, see sensitivity #7), add a sibling `addSensorDataWithoutEstimation` operation,
+   or live with the redundant UC9 job. Decide and update VP + §2b.
+6. **ConsultationId vs CorrelationId.** Report E.6 notes `ConsultationId: TODO maybe delete/merge
+   into CorrelationId`. Decide whether to keep two distinct types (semantic clarity: external
+   handle vs internal trace) or collapse to one.
+7. **OtherFunctionality / TODONode / ClinicalModelDB retirement.** Currently still present in
+   VP. Decide the cutover: at what point does `ClinicalModelDB` move from TODONode to
+   PatientDataNode, and `OtherFunctionality` get deleted?
 
 ---
 
@@ -837,65 +873,69 @@ cleanly or fight each other.
    - Is the scheduler still a single instance, or does Av2 replicate it? If replicated, how
      is `correlationId` preserved across a failover so UC9's result delivery still finds
      its subscriber?
-   - Priority lattice: P2 already uses dynamic priority in overload mode (high/med/low,
-     2/5/8 min deadlines per Table 1.1 of the initial rationale). UC9 adds an *above-
-     normal-priority* lane with a 3-min initiation budget *independent of patient risk
+   - Priority lattice: P2 already uses dynamic priority in overload mode. UC9 adds an
+     above-normal-priority lane with a 3-min initiation budget *independent of patient risk
      level*. Confirm UC9 priority sits above all three P2 tiers and doesn't starve them.
 
 2. **`RiskEstimationCombiner → setEstimatedPatientStatus` callback path (Figures D.5, D.6).**
-   P1's `IRiskEvents` push relies on `PatientStatusModule` firing the event whenever
+   P1's `P1IRiskEvents` push relies on `P1PatientStatusModule` firing the event whenever
    `setEstimatedPatientStatus` actually changes the stored status. If Av2 modifies this
-   callback path (e.g., to dedupe writes during a failover, or to fan out to a replica
-   before the notifier), the IRiskEvents emission point shifts. Confirm Av2 preserves
-   the "appropriate parties are notified" contract from §E.3.19.
+   callback path, the P1IRiskEvents emission point shifts. Confirm Av2 preserves the
+   "appropriate parties are notified" contract from §E.3.19.
 
-3. **`NotificationDispatcher` durable queue for red/yellow.**
-   P1 promises red/yellow notifications survive a crash (sensitivity #2 in §4, Response
-   measure 5). That's a persistence/HA story that's really an Av2 concern. Either: Av2
-   provides a durable queue facility that P1 sockets onto, or P1 declares its own
-   on-disk write-ahead log. Pick one.
+3. **`P1NotificationDispatcher` durable queue for red/yellow.**
+   P1 promises red/yellow notifications survive a crash (sensitivity #3 in §4, Response
+   measure 5). Currently backed by `P1DurableNotificationLog` (internal write-ahead log).
+   If Av2 prefers P1 to socket onto an Av2-provided durable queue facility instead, the
+   `P1INotificationLog` interface becomes the seam to externalise.
 
-4. **`PhysicianAccessNode` is a SPOF for every physician UC.**
-   Already flagged in §5 Trade-offs. UC5/6/7/8/9 all fail closed if `PhysicianAccessNode`
-   is unavailable. Av2 should treat this node as a replication target if their QAS
-   demands availability of physician-side flows.
+4. **`P1NotificationDispatcher` requires `Av2EmergencyDispatch`** (per report E.1.41 / E.3.16).
+   This is a **new** seam not in the original design. P1 now consumes the Av2 emergency
+   channel — likely so red notifications can also dispatch via the SMS backup when the
+   primary path is degraded. Need to agree:
+   - What exact semantics does P1 expect (best-effort? fan-out copy? failover only)?
+   - Which module inside `P1NotificationDispatcher` should own the required socket
+     (P1RiskEventSubscriber is the candidate per Conv. 5 — needs to declare it).
+
+5. **`PhysicianNode` is a SPOF for every physician UC.**
+   Already flagged in §5 Trade-offs. UC5/6/7/8/9 all fail closed if `PhysicianNode` is
+   unavailable. Av2 should treat this node as a replication target if their QAS demands
+   availability of physician-side flows.
 
 ### Soft overlaps (touch shared structure; usually compatible)
 
-5. **`ClinicalModelCache` deployment + invalidation reach.**
+6. **`ClinicalModelCache` deployment + invalidation reach.**
    P1's UC7 path calls `ClinicalModelCacheMgmt.invalidateCacheEntries(patientId)` after
-   writing config. If Av2 replicates the cache across multiple nodes (e.g., one per
-   `RiskEstimationProcessorNode` for locality), the invalidation must reach *all*
-   replicas. Today my §2c sketch assumes a single `ClinicalModelCache` on
-   `RiskEstimationMgmtNode`.
+   writing config. If Av2 replicates the cache across multiple nodes, the invalidation must
+   reach *all* replicas.
 
-6. **`PatientDataService` consolidates three legacy interfaces into one component.**
-   `SensorDataMgmt` (ingest write path), `OtherDataMgmt` (status read/write), and
-   `PatientRecordMgmt` (HIS EHR proxy) all live in the same runtime component on
-   `PatientDataNode`. Av2 might prefer independent failure boundaries (ingest can fail
-   without status reads failing, etc.) — that would split `PatientDataService` further.
-   If Av2 needs that split, P1's "single cross-node hop per request" argument in §3a/§3b
-   stays valid as long as the modules end up on the same node.
+7. **`P1PatientDataService` consolidates three legacy interfaces into one component.**
+   `SensorDataMgmt`, `OtherDataMgmt`, and `PatientRecordMgmt` all live in the same runtime
+   component on `PatientDataNode`. Av2 might prefer independent failure boundaries — that
+   would split `P1PatientDataService` further. If Av2 needs that split, P1's argument in
+   §3a/§3b stays valid as long as the modules end up on the same node.
 
-7. **`PatientRecordMgmt` extension (`updatePatientRecord`).**
-   P1 adds a write operation to §E.3.20's interface. The HIS path is shared. If Av2
-   adds retry / failover behaviour on `getPatientRecord`, it should apply symmetrically
-   to `updatePatientRecord` so UC8 EHR forwards survive HIS hiccups.
+8. **`PatientRecordMgmt` extension (`updatePatientRecord`).**
+   P1 adds a write operation to §E.3.20's interface. If Av2 adds retry / failover behaviour
+   on `getPatientRecord`, it should apply symmetrically to `updatePatientRecord` so UC8 EHR
+   forwards survive HIS hiccups.
 
-8. **`SensorDataMgmt.addSensorData` signature change (`triggerEstimation` param).**
-   The sensor ingest path is Av2 territory too. Any redundancy/replication of
-   `SensorIngestModule` must respect the `triggerEstimation=false` flag from UC9 to
-   avoid double-firing risk jobs (sensitivity #7).
+9. **`SensorDataMgmt.addSensorData` — `triggerEstimation` not yet in VP.**
+   Open per §6 OQ5. Until resolved, UC9 fires a redundant scheduled risk job. Any Av2
+   redundancy/replication of `P1SensorIngestModule` needs to know the chosen resolution.
 
 ### Decisions Av2 should know about (no compromise needed, just FYI)
 
-9. **`OtherFunctionality` and `TODONode` are retired by P1.** Replacement is
-   `PhysicianAccessNode` + `PatientDataNode` + `PatientGatewayCommander`. If Av2's draft
-   still references `OtherFunctionality` or `TODONode`, those references need updating.
-10. **`IRiskEvents` is push, not pull.** Sensitivity #2: flipping it breaks the "no impact
+10. **`OtherFunctionality` and `TODONode` are *not yet* retired.** Still present in VP per
+    report E.1.34 / E.4.37 / E.4.38. The intent remains to retire both once
+    `P1PatientDataService` + the PhysicianNode components fully cover their responsibilities.
+11. **`P1IRiskEvents` is push, not pull.** Sensitivity #2: flipping it breaks the "no impact
     on ingress" argument. Av2 should not introduce polling here even if it would simplify
     a failover scheme.
-11. **`PatientGatewayCommander` adds a brand-new outbound direction (PMS → patient
+12. **`P1PatientGatewayCommander` adds a brand-new outbound direction (PMS → patient
     gateway).** No existing component in the initial architecture talks outbound to the
     gateway. Av2 should know this path exists in case it affects gateway-side failure
-    handling.
+    handling. Currently no required interface is wired in VP (see §6 OQ4).
+13. **Cache lives on PatientDataNode, not PhysicianNode.** Changes the resource-isolation
+    story slightly: PatientDataNode now handles both ingest and physician-driven cache
+    reads. See §4 sensitivity #1 / #4.
