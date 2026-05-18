@@ -23,7 +23,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **description**: UC5 dispatcher. Subscribes to P1IRiskEvents and fans matching events out to the registered physicians. Priority queue orders red over yellow over green. Drops green first when over 100 per minute. Persists red and yellow to a durable log so they survive a crash.
 - **super-components**: None
 - **sub-modules**: P1DurableNotificationLog, P1NotificationInboxModule, P1PriorityBuffer, P1RecipientRegistry, P1RiskEventSubscriber
-- **provided interfaces**: P1INotificationInbox, P1IRiskEventListener (how can this be provided twice, not possible)
+- **provided interfaces**: P1INotificationInbox, P1IRiskEventListener
 - **required interfaces**: Av2EmergencyDispatch, P1IRiskEvents
 
 #### P1PatientDataService
@@ -47,7 +47,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **description**: Handles UC6 patient-status reads. Tiered priority queue (high, medium, low) feeds the 2 / 5 / 10 s SLA tiers. The tier for an incoming query comes from an in-memory patient-to-tier index kept current by subscribing to P1IRiskEvents, so the tier decision is O(1) on the hot path. Unknown patients default to the high tier so the SLA fails safe.
 - **super-components**: None
 - **sub-components**: None
-- **provided interfaces**: P1IPatientQuery, P1IRiskEventListener (how can this be provided twice, not possible)
+- **provided interfaces**: P1IPatientQuery, P1IRiskEventListener
 - **required interfaces**: P1IPatientStatusRead, P1IRiskEvents
 
 #### P1PatientStatusCache
@@ -63,15 +63,15 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **description**: Handles physician write and command flows for UC7 (configure risk assessment), UC8 (update risk level), and UC9 (on-demand consultation).
 - **super-components**: None
 - **sub-modules**: P1CommandRouter, P1ConfigurationHandler, P1CorrelationTracker, P1OnDemandConsultationHandler, P1RiskLevelHandler
-- **provided interfaces**: P1IPhysicianCommand, P1IRiskEventListener (how can this be provided twice, not possible)
-- **required interfaces**: ClinicalModelCacheMgmt, LaunchRiskEstimation, OtherDataMgmt, P1ClinicalConfigMgmt, P1IConsultationResultPush, P1IOnDemandSensorFetch, P1IRiskEvents, PatientRecordMgmt, SensorDataMgmt (TODO implement in vpp) 
+- **provided interfaces**: P1IPhysicianCommand, P1IRiskEventListener
+- **required interfaces**: ClinicalModelCacheMgmt, LaunchRiskEstimation, OtherDataMgmt, P1ClinicalConfigMgmt, P1IConsultationResultPush, P1IOnDemandSensorFetch, P1IRiskEvents, PatientRecordMgmt, SensorDataMgmt
 
 #### P1PhysicianGateway
 
 - **description**: Single external entry point for physicians. Thin router with no business logic. Also dispatches UC9 result pushes over the physician's already-open client channel.
 - **super-components**: None
 - **sub-components**: None
-- **provided interfaces**: P1IConsultationResultPush (why is this here? what does it do TODO add this), P1IPhysicianAPI
+- **provided interfaces**: P1IConsultationResultPush, P1IPhysicianAPI
 - **required interfaces**: P1INotificationInbox, P1IPatientQuery, P1IPhysicianCommand
 
 ---
@@ -131,7 +131,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **description**: UC9 orchestrator. Mints a CorrelationId via P1CorrelationTracker, fetches sensor data via P1IOnDemandSensorFetch, stores it via `SensorDataMgmt.addSensorData(..., triggerEstimation=false)` so the implicit scheduled job is suppressed, then launches a priority risk job via LaunchRiskEstimation carrying the CorrelationId. When the matching RiskEvent arrives on P1IRiskEventListener, the handler pushes the result back to the originating physician via P1IConsultationResultPush. No polling.
 - **super-components**: P1PhysicianCommandService
 - **sub-modules**: None
-- **provided interfaces**: P1IOnDemandCommand, P1IRiskEventListener (TODO add this)
+- **provided interfaces**: P1IOnDemandCommand, P1IRiskEventListener
 - **required interfaces**: LaunchRiskEstimation, P1IConsultationResultPush, P1ICorrelationTracking, P1IOnDemandSensorFetch, P1IRiskEvents, SensorDataMgmt
 
 #### P1PatientStatusModule
@@ -140,7 +140,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **super-components**: P1PatientDataService
 - **sub-modules**: None
 - **provided interfaces**: OtherDataMgmt, P1IRiskEvents
-- **required interfaces**: P1IRiskEventListener (TODO add this)
+- **required interfaces**: P1IRiskEventListener
 
 #### P1PriorityBuffer
 
@@ -163,7 +163,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **description**: Provides P1IRiskEventListener at the component boundary. On event, queries P1RecipientRegistry, persists red and yellow to P1DurableNotificationLog, then enqueues to P1PriorityBuffer. Owns the outbound Av2EmergencyDispatch socket for backup-channel escalation of red notifications.
 - **super-components**: P1NotificationDispatcher
 - **sub-modules**: None
-- **provided interfaces**: P1IRiskEventListener (TODO add this)
+- **provided interfaces**: P1IRiskEventListener
 - **required interfaces**: Av2EmergencyDispatch, P1INotificationLog, P1IPriorityBuffer, P1IRecipientRegistry, P1IRiskEvents
 
 #### P1RiskLevelHandler
@@ -172,7 +172,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Correlation
 - **super-components**: P1PhysicianCommandService
 - **sub-modules**: None
 - **provided interfaces**: P1IRiskLevelCommand
-- **required interfaces**: OtherDataMgmt (TODO add this), PatientRecordMgmt
+- **required interfaces**: OtherDataMgmt, PatientRecordMgmt
 
 #### P1SensorIngestModule
 
