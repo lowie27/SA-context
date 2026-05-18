@@ -369,10 +369,10 @@ existing interfaces reused verbatim from rationale PDF §E.3
             - effect: Store the given sensor data and meta-data.
         - `getAllSensorDataOfPatient(patientId: Datatypes.PatientId): Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — §E.3.23 (Map instead of list)
             - effect: This will fetch and return all sensor data belonging to the patient identified by patientId
-            - returns: A map of timestamps to SensorDataPackages covering the patient's full sensor history.
+            - returns: The sensor data and the timestamp of their arrival in the system.
         - `getAllSensorDataOfPatientBefore(patientId: Datatypes.PatientId, before: Datatypes.Timestamp): Map<Datatypes.Timestamp, Datatypes.SensorDataPackage>` — §E.3.23 (Map instead of list)
             - effect: Fetch and return all sensor data belonging to the patient identified by patientId which was received before the specified time stopTime.
-            - returns: A map of timestamps to SensorDataPackages restricted to entries older than `before`.
+            - returns: The sensor data and the timestamp of their arrival in the system.
     - purpose: append/query raw sensor data; ingest write path with optional trigger of the risk pipeline
 
 #### PatientRecordMgmt
