@@ -44,11 +44,11 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 
 #### P1PatientQueryService
 
-- **description**: handles UC6 patient-status reads; tiered priority queue (high > medium > low) feeds the 2/5/10 s SLA tiers.
+- **description**: handles UC6 patient-status reads; tiered priority queue (high > medium > low) feeds the 2/5/10 s SLA tiers. The tier for an incoming query is taken from an in-memory patient→risk-tier index kept current by subscribing to `P1IRiskEvents` (every status change updates the index before the notification path sees it); unknown patients default to the high tier so the SLA fails safe rather than slow.
 - **super-components**: None
 - **sub-components**: None
 - **provided interfaces**: P1IPatientQuery
-- **required interfaces**: P1IPatientStatusRead
+- **required interfaces**: P1IPatientStatusRead, P1IRiskEvents
 
 #### P1PatientStatusCache
 
@@ -128,7 +128,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 
 #### P1OnDemandConsultationHandler
 
-- **description**: UC9 orchestration — mints a CorrelationId via P1CorrelationTracker, fetches sensor data, stores it, launches a priority risk job carrying the CorrelationId, then waits for the matching P1IRiskEvents.
+- **description**: UC9 orchestration — mints a CorrelationId via P1CorrelationTracker, fetches sensor data via P1IOnDemandSensorFetch, stores it via `SensorDataMgmt.addSensorData(..., triggerEstimation=false)` so the implicit scheduled job is suppressed, launches a priority risk job carrying the CorrelationId, then stashes the matching `P1IRiskEvents` payload indexed by ConsultationId so `pollConsultationResult` can return it.
 - **super-components**: P1PhysicianCommandService
 - **sub-modules**: None
 - **provided interfaces**: P1IOnDemandCommand
@@ -176,7 +176,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 
 #### P1SensorIngestModule
 
-- **description**: accepts and persists raw sensor data; triggers risk estimation on arrival.
+- **description**: accepts and persists raw sensor data; on arrival launches a risk-estimation job via LaunchRiskEstimation **only when the caller sets `triggerEstimation=true`** (the UC4 default). UC9 callers pass `false` to suppress the implicit scheduled job in favour of the priority one P1OnDemandConsultationHandler launches explicitly.
 - **super-components**: P1PatientDataService
 - **sub-modules**: None
 - **provided interfaces**: SensorDataMgmt
@@ -296,6 +296,9 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
     - `requestOnDemandConsultation(patientId: PatientId): ConsultationId`
         - effect: Internal delegate — P1CommandRouter forwards the UC9 request to P1OnDemandConsultationHandler, which mints a CorrelationId, fetches sensor data, launches a priority risk job, and awaits the matching event.
         - returns: The ConsultationId minted for this UC9 request.
+    - `pollConsultationResult(consultationId: ConsultationId): PatientStatus`
+        - effect: Internal delegate — P1CommandRouter forwards the poll to P1OnDemandConsultationHandler, which looks up the stashed result for this consultationId. The result becomes available once the matching P1IRiskEvents event (CorrelationId-filtered) has arrived; callers re-poll until non-null. The handler clears the entry after the result has been returned once.
+        - returns: The PatientStatus produced by the UC9 risk estimation, or null if the matching event has not yet arrived.
 
 #### P1IOnDemandSensorFetch
 
@@ -312,7 +315,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 - **required by**: P1PhysicianGateway
 - **operations**:
     - `consultPatientStatus(patientId: PatientId): PatientStatus`
-        - effect: Reads the patient's current status and dispatches the request to the priority tier matching the patient's risk level so the 2/5/10 s SLA holds under load.
+        - effect: Reads the patient's current status. The request is dispatched to the priority tier (high > medium > low) matching the patient's last-known risk level from the in-memory tier index inside P1PatientQueryService — so the tier decision is O(1) on the hot path, not a chicken-and-egg lookup against the same status read. Unknown patients fall back to the high tier so the SLA fails safe.
         - returns: The patient's most recent status.
 
 #### P1IPatientStatusRead
@@ -330,17 +333,27 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 - **required by**: (external — physicians calling into the PMS)
 - **operations**:
     - `consultPatientStatus(patientId: PatientId): PatientStatus`
-        - effect: Returns the named patient's current status; SLA tier (2/5/10 s) is picked from the patient's risk level.
+        - effect: Returns the named patient's current status; SLA tier (2/5/10 s) is picked from the patient's last-known risk level via P1PatientQueryService's in-memory risk-tier index.
         - returns: The patient's most recent status — risk level, supporting data, and timestamp.
     - `requestOnDemandConsultation(patientId: PatientId): ConsultationId`
         - effect: Initiates an on-demand consultation — fetches fresh sensor data, launches a priority risk estimation, and returns an id the caller uses to correlate the eventual result.
         - returns: The ConsultationId minted for this request.
+    - `pollConsultationResult(consultationId: ConsultationId): PatientStatus`
+        - effect: Retrieves the result of the UC9 risk estimation identified by consultationId; null until the priority risk job has completed and its event has been observed.
+        - returns: The PatientStatus from the matching UC9 risk estimation, or null if pending.
     - `configurePatientRiskAssessment(patientId: PatientId, config: ClinicalModelConfiguration)`
         - effect: Overwrites the per-patient ClinicalModelConfiguration and invalidates the clinical-model cache.
     - `updatePatientRiskLevel(patientId: PatientId, status: PatientStatus)`
         - effect: Updates the patient's risk level and forwards the change to the EHR via the HIS proxy.
     - `subscribeToNotifications(physicianId: PhysicianId)`
         - effect: Registers a physician to receive notifications about subsequent patient-status changes.
+    - `unsubscribeFromNotifications(physicianId: PhysicianId)`
+        - effect: Removes the physician from the recipient registry; notifications already queued for them are still delivered.
+    - `getPendingNotifications(physicianId: PhysicianId): List<Notification>`
+        - effect: Returns the physician's queued notifications in priority order (red > yellow > green) without removing them from the buffer.
+        - returns: The list of pending Notifications for the physician, ordered by severity then arrival.
+    - `acknowledgeNotification(notificationId: NotificationId)`
+        - effect: Confirms delivery of the notification so the dispatcher can remove it from the priority buffer and the durable log.
 
 #### P1IPhysicianCommand
 
@@ -354,6 +367,9 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
     - `requestOnDemandConsultation(patientId: PatientId): ConsultationId`
         - effect: Initiates an on-demand consultation — fetches fresh sensor data, launches a priority risk estimation, and returns an id correlating the eventual result.
         - returns: The ConsultationId minted for this UC9 request.
+    - `pollConsultationResult(consultationId: ConsultationId): PatientStatus`
+        - effect: Returns the result of the UC9 risk estimation identified by consultationId; null until the matching P1IRiskEvents event has been received and stashed by P1OnDemandConsultationHandler.
+        - returns: The PatientStatus from the matching UC9 risk estimation, or null if pending.
 
 #### P1IPriorityBuffer
 
@@ -384,7 +400,7 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 #### P1IRiskEvents
 
 - **provided by**: P1PatientStatusModule (also at the parent boundary on P1PatientDataService)
-- **required by**: P1NotificationDispatcher, P1OnDemandConsultationHandler, P1PhysicianCommandService, P1RiskEventSubscriber
+- **required by**: P1NotificationDispatcher, P1OnDemandConsultationHandler, P1PatientQueryService, P1PhysicianCommandService, P1RiskEventSubscriber
 - **operations**:
     - `subscribe(subscriberId: SubscriberId, filter: FilterCriteria): SubscriptionId`
         - effect: Registers a subscriber to receive RiskEvent payloads matching the filter; an empty filter receives every event.
@@ -416,8 +432,8 @@ Custom data types referenced (defined in `datatypes_reference.md`): `Consultatio
 - **provided by**: P1SensorIngestModule (was OtherFunctionality)
 - **required by**: Av2DataIngestionService, ClinicalJobCreator, P1OnDemandConsultationHandler, P1PhysicianCommandService, RiskEstimationScheduler
 - **operations**:
-    - `addSensorData(patientId: PatientId, sensorData: SensorDataPackage, receivedAt: Timestamp)`
-        - effect: Store the given sensor data and meta-data.
+    - `addSensorData(patientId: PatientId, sensorData: SensorDataPackage, receivedAt: Timestamp, triggerEstimation: boolean)`
+        - effect: Store the given sensor data and meta-data. When `triggerEstimation` is true (UC4 default) the ingest module launches a risk-estimation job on the new data; when false the call is store-only — UC9 callers pass `false` because they explicitly launch a priority risk job and would otherwise double the scheduler load for every on-demand consultation.
     - `getAllSensorDataOfPatient(patientId: PatientId): Map<Timestamp, SensorDataPackage>`
         - effect: Fetch and return all sensor data belonging to the patient identified by patientId.
         - returns: The sensor data and the timestamp of their arrival in the system.
