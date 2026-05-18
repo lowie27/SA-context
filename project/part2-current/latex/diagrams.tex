@@ -53,22 +53,6 @@ Functionality that still has to be worked out in more detail is captured by the 
 \end{landscape}
 
 
-%%% Decomposition of the Av2CommunicationGateway (988.0x421.0)
-
-\begin{figure}[!htp]
-  \centering
-  \includegraphics[width=\maxwidth{\textwidth}]{ComponentDiagram-Decomposition-of-the-Av2CommunicationGateway.pdf}
-  \caption[Decomposition of the Av2CommunicationGateway]{\label{diag:Component:DecompositionoftheAv2CommunicationGateway}Decomposition of the Av2CommunicationGateway}
-\end{figure}
-
-%%% Decomposition of the Av2MonitoringService (1066.0x420.0)
-
-\begin{figure}[!htp]
-  \centering
-  \includegraphics[width=\maxwidth{\textwidth}]{ComponentDiagram-Decomposition-of-the-Av2MonitoringService.pdf}
-  \caption[Decomposition of the Av2MonitoringService]{\label{diag:Component:DecompositionoftheAv2MonitoringService}Decomposition of the Av2MonitoringService}
-\end{figure}
-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -87,6 +71,22 @@ Functionality that still has to be worked out in more detail is captured by the 
 \end{figure}
 
 
+
+%%% Decomposition of the Av2CommunicationGateway (988.0x421.0)
+
+\begin{figure}[!htp]
+  \centering
+  \includegraphics[width=\maxwidth{\textwidth}]{ComponentDiagram-Decomposition-of-the-Av2CommunicationGateway.pdf}
+  \caption[Decomposition of the Av2CommunicationGateway]{\label{diag:Component:DecompositionoftheAv2CommunicationGateway}Decomposition of the Av2CommunicationGateway}
+\end{figure}
+
+%%% Decomposition of the Av2MonitoringService (1066.0x420.0)
+
+\begin{figure}[!htp]
+  \centering
+  \includegraphics[width=\maxwidth{\textwidth}]{ComponentDiagram-Decomposition-of-the-Av2MonitoringService.pdf}
+  \caption[Decomposition of the Av2MonitoringService]{\label{diag:Component:DecompositionoftheAv2MonitoringService}Decomposition of the Av2MonitoringService}
+\end{figure}
 
 %%% Decomposition of the Av2PatientGateway (1145.0x601.0)
 
@@ -120,7 +120,7 @@ Functionality that still has to be worked out in more detail is captured by the 
   \caption[Decomposition of the P1PatientDataService]{\label{diag:Component:DecompositionoftheP1PatientDataService}Decomposition of the P1PatientDataService}
 \end{figure}
 
-%%% Decomposition of the P1PhysicianCommandService (845.0x583.0)
+%%% Decomposition of the P1PhysicianCommandService (849.0x583.0)
 
 \begin{figure}[!htp]
   \centering
@@ -145,7 +145,7 @@ Functionality that still has to be worked out in more detail is captured by the 
 \minilof{}
 
 
-%%% Context diagram for the deployment view (1091.0x879.0)
+%%% Context diagram for the deployment view (1390.0x879.0)
 
 \begin{figure}[!htp]
   \centering
@@ -155,7 +155,7 @@ Functionality that still has to be worked out in more detail is captured by the 
 
 
 
-%%% Primary deployment diagram (3310.0x1055.0; rotated)
+%%% Primary deployment diagram (3310.0x1080.0; rotated)
 \begin{landscape}
 \begin{figure}[!htp]
   \centering
@@ -280,7 +280,7 @@ Note that, as this diagram depicts the internal flow between modules within the 
   \begin{tikzpicture}
     \node[anchor=south west,inner sep=0] (image) at (0,0) {\includegraphics[width=\maxwidth{\textwidth}]{InteractionDiagram-Incoming-sensor-data.pdf}};
     \begin{scope}[x={(image.south east)},y={(image.north west)}]
-        \node [fit={(0.2221,0.5868) (0.6662,0.3802)},inner sep=0,hyperlink node={diag:Interaction:Riskestimationprocess}] {};\node [fit={(0.4728,1.0000) (0.7112,0.8512)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationCombiner}] {};
+        \node [fit={(0.2207,0.5868) (0.6649,0.3802)},inner sep=0,hyperlink node={diag:Interaction:Riskestimationprocess}] {};\node [fit={(0.4728,1.0000) (0.7112,0.8512)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationCombiner}] {};
 \node [fit={(0.2439,1.0000) (0.4632,0.8512)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationScheduler}] {};
 \node [fit={(0.0000,1.0000) (0.1703,0.8512)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformOtherFunctionality}] {};
     \end{scope}
