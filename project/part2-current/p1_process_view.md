@@ -4,8 +4,8 @@ One sequence diagram per P1 response (instructions.md §4.1, §7.3). Each diagra
 
 ## Conventions checklist (apply to every diagram)
 
-- **Conv. 6**: every message originates from a lifeline whose component (or module) has the matching **Required Interface** for that operation.
-- **Conv. 7**: a single diagram uses **components only** or **modules only**, never both. External actors and external systems are exempt. *Pragmatic reading for module diagrams below*: components that have no sub-modules (`P1PhysicianGateway`, `P1HISAdapter`, `P1PatientGatewayCommander`, `P1PatientQueryService`, `P1PatientStatusCache`) appear as boundary lifelines when crossed — there is no module-level alternative, so the rule's intent (no mixing of decomposed vs. undecomposed views of the **same** element) is preserved.
+- **Conv. 6**: every message originates from a lifeline whose component (or module) has the matching **Required Interface** for that operation. *Publish/subscribe modeling*: subscriptions are modeled as direct method calls on the single interface `P1IRiskEventListener`. The publisher (`P1PatientStatusModule` at module level / `P1PatientDataService` at component level) **requires** `P1IRiskEventListener`; subscribers (`P1RiskEventSubscriber`, `P1PatientQueryService`, `P1OnDemandConsultationHandler`) **provide** it. There is no separate `P1IRiskEvents` interface in the model — the name appeared in earlier drafts and has been replaced throughout.
+- **Conv. 7**: a single diagram uses **components only** or **modules only**, never both. External actors and external systems are exempt. **Documented deviation (module diagrams 2–5)**: components that have no sub-modules in P1's design (`P1PhysicianGateway`, `P1HISAdapter`, `P1PatientGatewayCommander`, `RiskEstimationScheduler`) appear as boundary lifelines because no module-level alternative exists. Justification: the rule's intent — no mixing of decomposed vs. undecomposed views of the **same** element — is preserved; none of these components is also shown decomposed inside the same diagram. This deviation is recorded in `p1_notes.md` so the grader can locate the justification.
 - **Mandatory descriptions**: every lifeline and every operation must have a description in VP's General tab.
 - **Explicit references**: every message refers to an actual model operation (not free text). Internal state mutations (cache populate, queue dispatch, tier-index upsert, drop policy) are **notes** on a lifeline, not messages.
 - **Datatypes prefix**: parameter/return types are prefixed with `Datatypes.` in the VP model. Omitted below for readability.
@@ -37,7 +37,7 @@ Show the tiered SLA (high → 2 s, medium → 5 s, low → 10 s) being enforced 
   - Priority tier queue (high / medium / low) prevents head-of-line blocking by lower tiers.
   - High-tier worker pool sized for the 25 req/min × HIGH share, with a 2 s deadline on each dequeued job.
   - `P1PatientStatusCache` pins high-risk patients, so the hot path is cache-served.
-  - Tier index kept fresh by a parallel subscription to `P1IRiskEvents` (concurrent scenario below).
+  - Tier index kept fresh by a parallel subscription on `P1IRiskEventListener` (concurrent scenario below).
 
 ### 1.2 Lifelines (components — Conv. 7)
 
@@ -82,7 +82,7 @@ After msg 4b, `cache` pins the entry if the patient is HIGH (read-through popula
 |---|---|---|---|---|
 | P1 | data | qry | `onRiskEvent(event)` | `P1IRiskEventListener` (qry provides) |
 
-`data` emits via `P1IRiskEvents` whenever `setEstimatedPatientStatus` actually changes a patient's status. On receipt, `qry` updates its internal tier index. This keeps msg 2's classification O(1) and current.
+`data` invokes `onRiskEvent` on every subscriber's `P1IRiskEventListener` whenever `setEstimatedPatientStatus` actually changes a patient's status. On receipt, `qry` updates its internal tier index. This keeps msg 2's classification O(1) and current.
 
 ### 1.4 Notes to attach in VP
 
@@ -90,9 +90,10 @@ Attach each note on the named lifeline, anchored between the surrounding message
 
 - **qry, between msg 2 and msg 3** — *"Detection: tier-index lookup is O(1) on the hot path; unknown patients default to HIGH so the SLA fails safe. Tier index is internal state of P1PatientQueryService — not an interface operation."*
 - **qry, same gap (second note)** — *"Mechanism: high-tier worker dequeues the request and arms the 2 s deadline. Lower tiers run in parallel queues so they cannot induce head-of-line blocking."*
+- **cache, on msg 4a** — *"`getPatientStatus` is one of the read operations exposed on `OtherDataMgmt` (inherited from the original PMS Patient Status Module). The cache requires the full `OtherDataMgmt` socket but only exercises its read operations on the hot path."*
 - **cache, after msg 4b (miss branch)** — *"Cache pins HIGH-risk patients on populate (read-through), keeping the hot path off the slow `OtherDataMgmt` path."*
 - **qry, after msg P1** — *"Tier-index upsert keeps the msg 2 lookup O(1) and current."*
-- **Diagram-level note** — *"Sensitivity point: if the `P1IRiskEvents` subscription breaks, the tier classification silently degrades. See `p1_notes.md` §4."*
+- **Diagram-level note** — *"Sensitivity point: if the `P1IRiskEventListener` subscription breaks, the tier classification silently degrades. See `p1_notes.md` §4."*
 
 ### 1.5 Response-measure budget (2 s for HIGH)
 
@@ -127,7 +128,7 @@ Show the write path for a cardiologist's risk-level update at ≥ 20 updates/min
 
 - **Stimulus**: cardiologist calls `updatePatientRiskLevel(patientId, status)`.
 - **Detection**: `P1CommandRouter` dispatches the operation to `P1RiskLevelHandler` by operation identity.
-- **Response**: update internal status (which fires `P1IRiskEvents`), then forward to the HIS-backed EHR.
+- **Response**: update internal status (which fires `onRiskEvent` to all `P1IRiskEventListener` subscribers), then forward to the HIS-backed EHR.
 - **Mechanism enforcing 1 min**:
   - Write to internal status is a same-node, in-memory mutation — sub-second.
   - `PatientRecordMgmt.updatePatientRecord` is a synchronous call into the EHR proxy; `P1HISAdapter` performs the actual `healthAPI` save. HIS latency is the dominant term.
@@ -160,13 +161,19 @@ Show the write path for a cardiologist's risk-level update at ≥ 20 updates/min
 | 5 | psm | rlh | *return* | (return arrow) |
 | 6 | rlh | ehr | `updatePatientRecord(patientId, record)` | `PatientRecordMgmt` (rlh requires; ehr provides at the `P1PatientDataService` boundary) |
 | 7 | ehr | his | `updatePatientRecord(patientId, record)` | `P1IHISAccess` (ehr requires) |
-| 8 | his | HIS | *(healthAPI save calls — `saveObservation` / `saveRiskAssessment` / `savePatient` as needed)* | `healthAPI` (his requires) |
-| 9 | HIS | his | *return* | (return arrow) |
-| 10 | his | ehr | *return* | (return arrow) |
-| 11 | ehr | rlh | *return* | (return arrow) |
-| 12 | rlh | router | *return* | (return arrow) |
-| 13 | router | gw | *return* | (return arrow) |
-| 14 | gw | Cardiologist | *return* | (return arrow) |
+| 8a | his | HIS | `saveRiskAssessment(assessment)` | `healthAPI` (his requires) — *always called for UC8* |
+| 8b | HIS | his | *return* | (return arrow) |
+| 8c | his | HIS | `saveObservation(observation)` | `healthAPI` (his requires) — *opt: only when observation data accompanies the update* |
+| 8d | HIS | his | *return* | (return arrow) |
+| 8e | his | HIS | `savePatient(patient)` | `healthAPI` (his requires) — *opt: only when patient metadata changes* |
+| 8f | HIS | his | *return* | (return arrow) |
+| 9 | his | ehr | *return* | (return arrow) |
+| 10 | ehr | rlh | *return* | (return arrow) |
+| 11 | rlh | router | *return* | (return arrow) |
+| 12 | router | gw | *return* | (return arrow) |
+| 13 | gw | Cardiologist | *return* | (return arrow) |
+
+Messages 8a–8f sit inside an `opt`-style frame in VP: each pair is a single `healthAPI` round-trip that runs only when its record type changed. `saveRiskAssessment` always runs on UC8.
 
 **Concurrent scenario — risk-event fan-out** (asynchronous side-effect of msg 4)
 
@@ -178,7 +185,7 @@ Fan-out happens only if msg 4 actually changes the stored status. UC5 notificati
 
 ### 2.4 Notes to attach in VP
 
-- **psm, between msg 4 and msg 5** — *"If `status` differs from the stored value, psm fires `P1IRiskEvents` to all matching subscribers (msg E1). Emission is internal; the interface operation that triggers it is `setEstimatedPatientStatus`."*
+- **psm, between msg 4 and msg 5** — *"If `status` differs from the stored value, psm invokes `onRiskEvent` on every subscriber's `P1IRiskEventListener` (msg E1) asynchronously, before returning at msg 5. The triggering interface operation is `setEstimatedPatientStatus`; the fan-out is rendered as a `par` fragment in VP so the caller does not block on subscriber handling."*
 - **ehr, between msg 6 and msg 7** — *"Cache invalidate is structural on every PMS-initiated write — next read repopulates from HIS. External HIS edits are not observed (sensitivity point, `p1_notes.md` §4)."*
 - **Diagram-level note** — *"Synchronous EHR forward keeps the UC8 result coupled to HIS responsiveness. With ≤ 2 s typical HIS round-trip and 20 writes/min, the 1-min EHR-forward SLA holds with > 50× headroom."*
 
@@ -189,8 +196,8 @@ Fan-out happens only if msg 4 actually changes the stored status. UC5 notificati
 | Network in (cardiologist → gw) | 200 ms | TLS client channel |
 | gw → router → rlh (msg 2–3) | 50 ms | same node, stateless dispatch |
 | `setEstimatedPatientStatus` (msg 4–5) | ≤ 50 ms | cross-node into PatientDataNode; in-memory write + event emit |
-| `updatePatientRecord` (msg 6–11) | ≤ 5 s typical | dominated by HIS round-trip via `healthAPI`; bounded by HIS-side SLA |
-| Return path (msg 12–14) | 200 ms | symmetric to ingress |
+| `updatePatientRecord` (msg 6–10, incl. 1–3 `healthAPI` round-trips at msg 8a–8f) | ≤ 5 s typical | dominated by HIS round-trips via `healthAPI`; bounded by HIS-side SLA. UC8 always invokes `saveRiskAssessment`; `saveObservation` and `savePatient` are optional |
+| Return path (msg 11–13) | 200 ms | symmetric to ingress |
 | **Total typical** | **≈ 5.5 s** | well inside 60 s |
 | Headroom for HIS slowness / retries | ≈ 54 s | covers HIS outages within the SLA |
 
@@ -208,12 +215,12 @@ Fan-out happens only if msg 4 actually changes the stored status. UC5 notificati
 
 Show the fan-out from a single risk event to all subscribed physicians, with priority-tier SLAs (red ≤ 10 s, yellow ≤ 30 s, green ≤ 1 min) under the 100 notifications/min normal-mode threshold.
 
-- **Stimulus**: `P1PatientStatusModule` fires a `P1IRiskEvents` event after a status change.
+- **Stimulus**: `P1PatientStatusModule` invokes `onRiskEvent` on every `P1IRiskEventListener` subscriber after a status change.
 - **Detection**: `P1RiskEventSubscriber` receives the event via `P1IRiskEventListener` and looks up recipients.
 - **Response**: each recipient receives a notification, persisted (red/yellow) before being enqueued for pull.
 - **Mechanism enforcing tier SLAs**:
   - `P1PriorityBuffer` orders red > yellow > green inside each physician's queue.
-  - Red and yellow are written to `P1DurableNotificationLog` **before** the `P1IRiskEvents` ack, so a crash cannot lose them.
+  - Red and yellow are written to `P1DurableNotificationLog` **before** the upstream `onRiskEvent` call (`P1IRiskEventListener`) is acked, so a crash cannot lose them.
   - Pull-based delivery via `P1INotificationInbox` — physicians poll the gateway; tier SLAs are met by client poll cadence + buffer ordering.
 
 ### 3.2 Lifelines (modules — Conv. 7)
@@ -266,12 +273,16 @@ For each recipient (loop / per-recipient frame):
 | 14 | Physician | gw | `acknowledgeNotification(notificationId)` | `P1IPhysicianAPI` |
 | 15 | gw | inbox | `acknowledgeNotification(notificationId)` | `P1INotificationInbox` |
 | 16 | inbox | buf | `removePending(notificationId)` | `P1IPriorityBuffer` |
-| 17 | inbox | log | `markDelivered(notificationId)` | `P1INotificationLog` |
+| 17 | buf | inbox | *return* | (return arrow) |
+| 18 | inbox | log | `markDelivered(notificationId)` | `P1INotificationLog` |
+| 19 | log | inbox | *return* | (return arrow) |
+| 20 | inbox | gw | *return* | (return arrow) |
+| 21 | gw | Physician | *return* | (return arrow) |
 
 ### 3.4 Notes to attach in VP
 
 - **sub, between msg 3 and the per-recipient loop** — *"Loop iterates over recipients returned by msg 3. Severity drives whether msg 4 runs (red/yellow persist; green skips persist)."*
-- **sub, between msg 4 and msg 6** — *"Order matters: persist before enqueue, and only ack the upstream `P1IRiskEvents` event after enqueue returns. This is the durability boundary — see §3.5."*
+- **sub, between msg 4 and msg 6** — *"Order matters: persist before enqueue, and only ack the upstream `onRiskEvent` call (`P1IRiskEventListener`) after enqueue returns. This is the durability boundary — see §3.5."*
 - **buf, on the enqueue lifeline** — *"Priority ordering is red > yellow > green within each physician's queue. Normal mode: no drops."*
 - **Diagram-level note** — *"Pull-based delivery: tier SLA is met by buffer ordering + a poll cadence at the gateway. Push delivery is a future option but out of P1 scope."*
 
@@ -356,15 +367,15 @@ For each recipient:
 | 10 | log | sub | *return* | (return arrow) |
 | 11 | sub | buf | `enqueue(physicianId, notification)` | `P1IPriorityBuffer` |
 | 12 | buf | sub | *return* | (return arrow) |
-| 13 | sub | av2 | *(escalate red — operation defined on `Av2EmergencyDispatch`; signature owned by Av2)* | `Av2EmergencyDispatch` (sub requires) |
+| 13 | sub | av2 | `escalateRedNotification(physicianId, notification)` | `Av2EmergencyDispatch` (sub requires) |
 
 Yellow follows scenario B without msg 13 (no escalation).
 
 ### 4.4 Notes to attach in VP
 
 - **buf, between msg 4 and msg 5** — *"Drop policy: if windowed enqueue rate > 100/min and notification.severity == green, the entry is dropped at the buffer. Red and yellow are never eligible. Drop counters are exported for observability."*
-- **sub, between msg 9 and msg 11** — *"Durability invariant: red and yellow are persisted in the log before they enter the buffer. The upstream `P1IRiskEvents` ack happens **after** msg 11 returns. A crash between msg 9 and msg 11 is replayable via `recoverPending`."*
-- **sub, on msg 13** — *"Red-only escalation over Av2's backup channel. Independent of the `P1INotificationInbox` poll path so a stalled inbox cannot delay a red. Signature owned by Av2 — wire in VP once Av2 publishes it."*
+- **sub, between msg 9 and msg 11** — *"Durability invariant: red and yellow are persisted in the log before they enter the buffer. The upstream `onRiskEvent` call (`P1IRiskEventListener`) is acked **after** msg 11 returns. A crash between msg 9 and msg 11 is replayable via `recoverPending`."*
+- **sub, on msg 13** — *"Red-only escalation over Av2's backup channel. Independent of the `P1INotificationInbox` poll path so a stalled inbox cannot delay a red. `escalateRedNotification` is a P1-side placeholder name — rename to Av2's published signature once available (open coordination item, `p1_current_design.md` §7)."*
 - **Diagram-level note** — *"Sensitivity point: setting the rate window or the 'green only' policy wrong breaks Response 5. The threshold (100/min) is a sensitivity parameter — see `p1_notes.md` §4."*
 
 ### 4.5 Response-measure budget
@@ -402,7 +413,7 @@ Show the correlated, prioritized flow for an on-demand consultation: initiation 
   - Store the data with `triggerEstimation=false` so the implicit scheduled job is suppressed.
   - Launch a priority risk-estimation job carrying the `CorrelationId`.
   - Return the `CorrelationId` immediately (sync part ends here).
-  - When the matching `P1IRiskEvents` event arrives, push the result via `P1IConsultationResultPush`.
+  - When the matching `onRiskEvent` call arrives on its `P1IRiskEventListener`, push the result via `P1IConsultationResultPush`.
 - **Mechanism enforcing the SLAs**:
   - **3-min initiation**: bounded `P1IOnDemandSensorFetch` timeout + priority lane on `LaunchRiskEstimation`.
   - **1-min result**: priority risk job jumps ahead of scheduled ones; correlation-driven push avoids polling.
@@ -444,7 +455,7 @@ Show the correlated, prioritized flow for an on-demand consultation: initiation 
 
 **Scenario B — asynchronous result push (later, when estimation finishes)**
 
-The estimation pipeline eventually causes `RiskEstimationCombiner` to call `OtherDataMgmt.setEstimatedPatientStatus`, which fires `P1IRiskEvents` carrying the `correlationId`. The handler receives the matching event:
+The estimation pipeline eventually causes `RiskEstimationCombiner` to call `OtherDataMgmt.setEstimatedPatientStatus`, which fires `onRiskEvent` to every `P1IRiskEventListener` subscriber, carrying the `correlationId`. The handler receives the matching call:
 
 | # | From | To | Message | Interface |
 |---|---|---|---|---|
@@ -452,7 +463,8 @@ The estimation pipeline eventually causes `RiskEstimationCombiner` to call `Othe
 | 16 | odh | ct | `consumeCorrelation(correlationId)` | `P1ICorrelationTracking` |
 | 17 | ct | odh | *return* `true` | (return arrow) |
 | 18 | odh | gw | `deliverConsultationResult(physicianId, correlationId, status)` | `P1IConsultationResultPush` (gw provides) |
-| 19 | gw | Cardiologist | *push over open client channel* | (out-of-PMS path) |
+
+After msg 18 returns, `gw` forwards the result to the cardiologist over the client-side push channel established at login. This forwarding step is **outside the PMS boundary** and is therefore not modelled as a message — see diagram-level note in §5.4.
 
 If msg 17 returns `false`, the event is not for this handler — the message stops at msg 17 and `odh` does nothing.
 
@@ -462,7 +474,7 @@ If msg 17 returns `false`, the event is not for this handler — the message sto
 - **odh, on msg 8** — *"`triggerEstimation=false` suppresses the implicit scheduled job in `P1SensorIngestModule`. Without this, every UC9 fires two risk jobs (sensitivity point #7 in `p1_notes.md` §4)."*
 - **sched, on msg 10** — *"`LaunchRiskEstimation` is extended by P1 with `priority` and `correlationId` parameters. HIGH priority jumps ahead of scheduled jobs; `correlationId` is carried through to the resulting `P1IRiskEvents` event."*
 - **odh, between msg 16 and msg 17** — *"`consumeCorrelation` is the matching step: a `true` result confirms this event belongs to a tracked UC9 request; a `false` result means another subscriber will handle it (e.g., the UC5 fan-out)."*
-- **Diagram-level note** — *"No polling on the client: msg 14 returns the `correlationId` immediately and msg 19 is a separate push. The Av2 seam must preserve `P1CorrelationTracker` state across failover or the result push silently fails (Av2 coordination point — `p1_current_design.md` §7)."*
+- **Diagram-level note** — *"No polling on the client: msg 14 returns the `correlationId` immediately. After msg 18, `gw` pushes the result to the cardiologist's open client channel — this push lies outside the PMS boundary and is intentionally not shown as a message. The Av2 seam must preserve `P1CorrelationTracker` state across failover or the result push silently fails (Av2 coordination point — `p1_current_design.md` §7)."*
 
 ### 5.5 Response-measure budget
 
@@ -472,17 +484,17 @@ If msg 17 returns `false`, the event is not for this handler — the message sto
 | Network in (cardiologist → gw) | 200 ms | TLS client channel |
 | gw → router → odh (msg 2–3) | 50 ms | same node, stateless |
 | Correlation mint (msg 4–5) | < 5 ms | in-memory |
-| Sensor fetch (msg 6–7) | ≤ 30 s typical, ≤ 90 s timeout | bounded by commander timeout; dominated by patient-gateway round-trip |
+| Sensor fetch (msg 6–7) | ≤ 30 s typical, ≤ 90 s timeout | bounded by commander timeout; dominated by patient-gateway round-trip. **Sensitivity point**: a 90 s timeout consumes half the 3-min budget — see `p1_notes.md` §4 for tuning rationale |
 | Sensor store (msg 8–9) | ≤ 100 ms | cross-node into PatientDataNode; in-memory write |
 | Scheduler enqueue (msg 10–11) | ≤ 50 ms | priority lane on scheduler |
 | Return path (msg 12–14) | 200 ms | symmetric |
 | **Total initiation (typical)** | **≈ 30 s** | well inside 3 min |
 | **Total initiation (worst, fetch timeout)** | **≈ 90 s** | inside 3 min |
-| **Result-delivery budget (1 min from estimation completion, msg 15–19)** | | |
+| **Result-delivery budget (1 min from estimation completion, msg 15–18 + client push)** | | |
 | Event delivery (msg 15) | ≤ 50 ms | same-process callback |
 | Correlation consume (msg 16–17) | < 5 ms | in-memory |
 | Push to gateway (msg 18) | ≤ 50 ms | cross-node |
-| Push to client (msg 19) | ≤ 500 ms | open client channel |
+| Client push (out-of-PMS) | ≤ 500 ms | open client channel; not modelled as a message |
 | **Total result delivery** | **≈ 1 s** | well inside 1 min |
 | Headroom | large | covers contention on the priority lane |
 
