@@ -325,8 +325,7 @@ channel, failing gateway). The architecture supports each:
         bandwidth statistics that justify SLA escalation.
   \item \emph{Failing patient gateway.} The
         \texttt{Av2StakeholderNotifier} dispatches a contact notification
-        through \texttt{Av2NotificationDispatch} (the
-        \texttt{notifyPatientContact} operation) so the patient (or
+        through \texttt{OutboundContactNotification} so the patient (or
         their contact) can resolve the issue (e.g.\ recharge the device).
 \end{itemize}
 On resolution, \texttt{Av2FailureClassifier} signals
@@ -1110,4 +1109,4 @@ recording for future iterations:
 \end{itemize}
 
 \bigskip
-The final architecture, diagrams (client-server, decomposition, deployment, process view) and the full element catalog are provided in the appendices, generated from the Visual Paradigm project through the SAPlugin.
+The final architecture, diagrams (system context, client-server, decomposition, deployment, process view) and the full element catalog ,is provided in the appendices, generated from the Visual Paradigm project through the SAPlugin.
