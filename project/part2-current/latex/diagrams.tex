@@ -42,7 +42,7 @@
 
 
 
-%%% Primary diagram of the client-server view (2830.0x1242.0; rotated)
+%%% Primary diagram of the client-server view (2830.0x1244.0; rotated)
 \begin{landscape}
 \begin{figure}[!htp]
   \centering
@@ -80,7 +80,7 @@ Functionality that still has to be worked out in more detail is captured by the 
   \caption[Decomposition of the Av2CommunicationGateway]{\label{diag:Component:DecompositionoftheAv2CommunicationGateway}Decomposition of the Av2CommunicationGateway}
 \end{figure}
 
-%%% Decomposition of the Av2MonitoringService (1066.0x420.0)
+%%% Decomposition of the Av2MonitoringService (1066.0x441.0)
 
 \begin{figure}[!htp]
   \centering
@@ -94,6 +94,14 @@ Functionality that still has to be worked out in more detail is captured by the 
   \centering
   \includegraphics[width=\maxwidth{\textwidth}]{ComponentDiagram-Decomposition-of-the-Av2PatientGateway.pdf}
   \caption[Decomposition of the Av2PatientGateway]{\label{diag:Component:DecompositionoftheAv2PatientGateway}Decomposition of the Av2PatientGateway}
+\end{figure}
+
+%%% Decomposition of the Av2StakeholderNotificationService (600.0x238.0)
+
+\begin{figure}[!htp]
+  \centering
+  \includegraphics[width=\maxwidth{\textwidth}]{ComponentDiagram-Decomposition-of-the-Av2StakeholderNotificationService.pdf}
+  \caption[Decomposition of the Av2StakeholderNotificationService]{\label{diag:Component:DecompositionoftheAv2StakeholderNotificationService}Decomposition of the Av2StakeholderNotificationService}
 \end{figure}
 
 %%% Decomposition of the MLModelManager (809.0x274.0)
@@ -145,14 +153,14 @@ Functionality that still has to be worked out in more detail is captured by the 
 \minilof{}
 
 
-%%% Context diagram for the deployment view (1390.0x879.0)
-
+%%% Context diagram for the deployment view (1537.0x879.0; rotated)
+\begin{landscape}
 \begin{figure}[!htp]
   \centering
   \includegraphics[width=\maxwidth{\textwidth}]{DeploymentDiagram-Context-diagram-for-the-deployment-view.pdf}
   \caption[Context diagram for the deployment view]{\label{diag:Deployment:Contextdiagramforthedeploymentview}Context diagram for the deployment view}
 \end{figure}
-
+\end{landscape}
 
 
 %%% Primary deployment diagram (3310.0x1080.0; rotated)
@@ -167,7 +175,7 @@ This TODONode will also have to be replaced with the final nodes are required by
 \end{landscape}
 
 
-%%% Pilot Deployment (200 patients, 5 clin models) (1528.0x1013.2827; rotated)
+%%% Pilot Deployment (200 patients, 5 clin models) (1528.0x1075.2827; rotated)
 \begin{landscape}
 \begin{figure}[!htp]
   \centering
@@ -203,12 +211,12 @@ Note that it is not correct to include this type of information in your primary 
   \begin{tikzpicture}
     \node[anchor=south west,inner sep=0] (image) at (0,0) {\includegraphics[width=\maxwidth{\textwidth}]{InteractionDiagram-Risk-estimation-process.pdf}};
     \begin{scope}[x={(image.south east)},y={(image.north west)}]
-        \node [fit={(0.8759,1.0000) (0.9940,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformClinicalModelDB}] {};
-\node [fit={(0.3219,1.0000) (0.4418,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformClinicalJobCreator}] {};
-\node [fit={(0.0000,1.0000) (0.1164,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformOtherFunctionality}] {};
-\node [fit={(0.5291,1.0000) (0.6498,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformClinicalModelCache}] {};
-\node [fit={(0.6704,1.0000) (0.8048,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationCombiner}] {};
-\node [fit={(0.1721,1.0000) (0.3099,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationScheduler}] {};
+        \node [fit={(0.8759,1.0000) (0.9932,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformClinicalModelDB}] {};
+\node [fit={(0.3211,1.0000) (0.4409,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformClinicalJobCreator}] {};
+\node [fit={(0.0000,1.0000) (0.1156,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformOtherFunctionality}] {};
+\node [fit={(0.5291,1.0000) (0.6490,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformClinicalModelCache}] {};
+\node [fit={(0.6704,1.0000) (0.8039,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationCombiner}] {};
+\node [fit={(0.1712,1.0000) (0.3082,0.9399)},inner sep=0,hyperlink node={comp:ComponentseHealthPlatformRiskEstimationScheduler}] {};
     \end{scope}
     \end{tikzpicture}
   \caption[Risk estimation process]{\label{diag:Interaction:Riskestimationprocess}Risk estimation process\\The scheduling and execution of a risk estimation triggered by the arrival of new sensor data. Note that if one or more clinical models in the \vpett{\nameref{comp:ComponentseHealthPlatformClinicalModelCache}} have been invalidated, all relevant clinical models are renewed.}
@@ -302,3 +310,38 @@ Note that, as this diagram depicts the internal flow between modules within the 
     \end{tikzpicture}
   \caption[Combining ClinicalModelJob results]{\label{diag:Interaction:CombiningClinicalModelJobresults}Combining ClinicalModelJob results}
 \end{figure}
+
+%%% UC6 Consult Patient Status (response 1) (1288.0x561.0)
+
+\begin{figure}[!htp]
+  \centering
+  \begin{tikzpicture}
+    \node[anchor=south west,inner sep=0] (image) at (0,0) {\includegraphics[width=\maxwidth{\textwidth}]{InteractionDiagram-UC6-Consult-Patient-Status-response-1-.pdf}};
+    \begin{scope}[x={(image.south east)},y={(image.north west)}]
+        \node [fit={(0.8416,0.9287) (0.9674,0.8645)},inner sep=0,hyperlink node={comp:ComponentsP1PatientDataService}] {};
+\node [fit={(0.6599,0.9287) (0.7919,0.8645)},inner sep=0,hyperlink node={comp:ComponentsP1PatientStatusCache}] {};
+\node [fit={(0.4387,0.9287) (0.5660,0.8645)},inner sep=0,hyperlink node={comp:ComponentsP1PatientQueryService}] {};
+\node [fit={(0.1825,0.9287) (0.2989,0.8645)},inner sep=0,hyperlink node={comp:ComponentsP1PhysicianGateway}] {};
+    \end{scope}
+    \end{tikzpicture}
+  \caption[UC6 Consult Patient Status (response 1)]{\label{diag:Interaction:UC6ConsultPatientStatusresponse1}UC6 Consult Patient Status (response 1)}
+\end{figure}
+
+%%% UC8 Update Risk Level + EHR Forward (1547.0x475.0; rotated)
+\begin{landscape}
+\begin{figure}[!htp]
+  \centering
+  \begin{tikzpicture}
+    \node[anchor=south west,inner sep=0] (image) at (0,0) {\includegraphics[width=\maxwidth{\txtheight}]{InteractionDiagram-UC8-Update-Risk-Level-EHR-Forward.pdf}};
+    \begin{scope}[x={(image.south east)},y={(image.north west)}]
+        \node [fit={(0.9664,1.0000) (1.0116,0.9242)},inner sep=0,hyperlink node={comp:ComponentsHIS}] {};
+\node [fit={(0.8578,1.0000) (0.9580,0.9242)},inner sep=0,hyperlink node={comp:ComponentsP1HISAdapter}] {};
+\node [fit={(0.1648,1.0000) (0.2993,0.9242)},inner sep=0,hyperlink node={comp:ComponentsP1PhysicianGateway}] {};\node [fit={(0.7466,1.0000) (0.8429,0.9242)},inner sep=0,hyperlink node={mod:ComponentsP1PatientDataServiceP1EHRProxyModule}] {};
+\node [fit={(0.5869,1.0000) (0.7201,0.9242)},inner sep=0,hyperlink node={mod:ComponentsP1PatientDataServiceP1PatientStatusModule}] {};
+\node [fit={(0.4842,1.0000) (0.5727,0.9242)},inner sep=0,hyperlink node={mod:ComponentsP1PhysicianCommandServiceP1RiskLevelHandler}] {};
+\node [fit={(0.3239,1.0000) (0.4596,0.9242)},inner sep=0,hyperlink node={mod:ComponentsP1PhysicianCommandServiceP1CommandRouter}] {};
+    \end{scope}
+    \end{tikzpicture}
+  \caption[UC8 Update Risk Level + EHR Forward]{\label{diag:Interaction:UC8UpdateRiskLevelEHRForward}UC8 Update Risk Level + EHR Forward}
+\end{figure}
+\end{landscape}
