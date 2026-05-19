@@ -961,14 +961,12 @@ disproportionate impact on one or more quality attributes.
         an internal architectural choice. Too short a window produces
         false positives during normal transient outages; too long a
         window masks real violations.
-  \item \textbf{Cross-QAS coupling: \texttt{P1IRiskEvents}.}
+  \item \textbf{Single-topic coupling: \texttt{P1IRiskEvents}.}
         A single in-process event topic carries every status change.
-        Five consumers subscribe to it (notifications, query tier index,
-        UC9 correlation match, heartbeat re-calibration, gateway-side
-        tier reasoning). Any added latency on this topic propagates to
-        \emph{all} of them. The topic is therefore a single point of
-        sensitivity for both Av2 (timely heartbeat re-calibration) and
-        P1 (timely fan-out and tier-index updates).
+        Three P1 consumers subscribe to it (notification fan-out,
+        query-service tier index, UC9 correlation match). Any added
+        latency on this topic propagates to all of them, so the topic
+        is a single point of sensitivity for P1 throughput SLAs.
 \end{itemize}
 
 \section{Trade-off points}
