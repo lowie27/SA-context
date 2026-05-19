@@ -544,11 +544,14 @@ on miss, it consults \texttt{OtherDataMgmt} (provided by
 \texttt{P1PatientStatusModule}) and populates itself. High-risk patients
 are \emph{pinned} (never evicted) so the 2\,s deadline does not race a
 cache fill on a cold key -- pinning is essentially a memory-for-time
-trade-off. The cache is invalidated implicitly through the event stream:
-when \texttt{P1PatientStatusModule}'s \texttt{setEstimatedPatientStatus}
-fires a \texttt{RiskEvent}, the cache listens and refreshes the entry.
-This keeps the cache strongly consistent with the underlying truth
-without requiring an explicit invalidation API call from the writer.
+trade-off. Freshness is bounded by a short TTL on cached entries: the
+authoritative status lives in \texttt{P1PatientStatusModule} and any
+write through \texttt{setEstimatedPatientStatus} is visible to the next
+read after the TTL expires. We accept a brief staleness window on
+status reads because the event-driven path that physicians actually
+care about for timeliness -- the UC5 notification fan-out -- runs off
+the \texttt{P1IRiskEvents} channel directly and does not depend on the
+cache.
 
 \paragraph{(AD-P1-4) Push-based notifications with priority buffer and
 durable log.}
@@ -558,14 +561,20 @@ $\geq 100$\,notifications/min, and \emph{no red or yellow notification
 may be lost} under overload. The architecture combines three mechanisms
 to meet all of them simultaneously:
 \begin{itemize}
-  \item \emph{Push, not poll.} \texttt{P1NotificationDispatcher} provides
+  \item \emph{Event-driven on the producer side.}
+        \texttt{P1NotificationDispatcher} provides
         \texttt{P1IRiskEventListener} and subscribes to
         \texttt{P1IRiskEvents}. The single source of truth for ``a status
         changed'' is
         \texttt{P1PatientStatusModule.setEstimatedPatientStatus}, which
-        fires \texttt{P1IRiskEvents} exactly once per real change. This
-        eliminates the polling overhead that would otherwise compete with
-        the read path for capacity.
+        fires \texttt{P1IRiskEvents} exactly once per real change. The
+        dispatcher therefore reacts to real status changes instead of
+        polling \texttt{P1IPatientQuery} on a timer, eliminating the
+        polling load that would otherwise compete with the UC6 read
+        path for capacity. Physicians retrieve queued notifications from
+        the dispatcher's per-physician inbox
+        (\texttt{P1INotificationInbox.getPendingNotifications} /
+        \texttt{acknowledgeNotification}).
   \item \emph{Write-ahead durable log.} \texttt{P1RiskEventSubscriber}
         writes red and yellow notifications into the
         \texttt{P1DurableNotificationLog} \emph{before} the in-memory
@@ -661,17 +670,21 @@ end-to-end correlation-tracked flow.
 
 \subsection*{Considered alternatives}
 
-\paragraph{Polling-based notifications.}
-A polling architecture in which the \texttt{P1PhysicianGateway}
-periodically pulls \texttt{P1IPatientQuery} for every subscribed patient
-would satisfy the functional requirement of UC5. We rejected it because
-the poll frequency required to meet the 10\,s red deadline (every
-$\leq 5$\,s per patient) multiplied by an arbitrary number of registered
-physicians and patients makes the read load unbounded in the worst case,
-directly conflicting with response 6 of P1 (no impact on the
-risk-estimation pipeline). Push-based events fire $O(1)$ per real status
-change, not per unit of time, and decouple notification latency from
-subscriber count.
+\paragraph{Producer-side polling for status changes.}
+An alternative architecture in which \texttt{P1NotificationDispatcher}
+periodically polls \texttt{P1IPatientQuery} for every subscribed patient
+to discover new status changes would satisfy the functional requirement
+of UC5. We rejected it because the poll frequency required to meet the
+10\,s red deadline (every $\leq 5$\,s per patient) multiplied by an
+arbitrary number of subscribed patients makes the read load unbounded
+in the worst case, directly conflicting with response 6 of P1 (no
+impact on the risk-estimation pipeline). Event-driven \texttt{P1IRiskEvents}
+subscription fires $O(1)$ per real status change, not per unit of time,
+and decouples discovery latency from subscriber count. The physician
+inbox itself remains pull-based on the consumer side
+(\texttt{getPendingNotifications}); the alternative we reject here is
+polling on the \emph{producer-internal} status-change discovery, not
+the inbox surface.
 
 \paragraph{Single FIFO queue for all UC6 reads.}
 A single FIFO queue would deliver the 25\,reads/min throughput but cannot
@@ -749,31 +762,37 @@ explicit priority launch.
 
 \paragraph{(OD-2) Extension of the \texttt{LaunchRiskEstimation} contract.}
 The original \texttt{LaunchRiskEstimation} carried \texttt{patientId},
-\texttt{newSensorData} and \texttt{receivedAt}. It is extended with
-\texttt{Priority} and \texttt{CorrelationId} to support UC9 (AD-P1-5).
-The scheduling logic from AD-2 of P2 is unchanged: FIFO in normal mode,
-EDF in overload mode, with the additional rule that
-\texttt{Priority = HIGH} jumps ahead of routine jobs. The new
+\texttt{newSensorData} and \texttt{receivedAt}. It is extended in three
+ways: (i)~\texttt{Priority} is added so UC9 jobs can jump ahead of
+routine ones (AD-P1-5); (ii)~\texttt{CorrelationId} is added (optional)
+so the originating UC9 request can be matched to the resulting event;
+and (iii)~\texttt{newSensorData} and \texttt{receivedAt} become
+\emph{optional}, so a UC7 reconfigure can launch a re-assessment
+against the patient's most recent stored sensor package without having
+to re-supply it. The scheduling logic from AD-2 of P2 is unchanged:
+FIFO in normal mode, EDF in overload mode, with the additional rule
+that \texttt{Priority = HIGH} jumps ahead of routine jobs. The
 \texttt{CorrelationId} parameter is opaque to the scheduler and is
-propagated unchanged through to the \texttt{RiskEvent} payload, where it
-allows subscribers to match the result back to the originating request.
-This is the only change to the previously-frozen P2 interface, and it is
-strictly additive: callers that pass \texttt{NORMAL}/\texttt{null}
-preserve the original semantics.
+propagated unchanged through to the \texttt{RiskEvent} payload, where
+it allows subscribers to match the result back to the originating
+request. All three changes are strictly additive at the interface
+level: callers that pass \texttt{NORMAL}/\texttt{null} for the new
+fields and supply \texttt{newSensorData}/\texttt{receivedAt} preserve
+the original semantics.
 
 \paragraph{(OD-3) Introduction of \texttt{P1IRiskEvents} as the single
 in-process event bus.}
 \texttt{P1IRiskEvents} is emitted by \texttt{P1PatientStatusModule}
 whenever \texttt{setEstimatedPatientStatus} \emph{actually changes} the
 stored status. Subscribers include \texttt{P1NotificationDispatcher} (UC5
-fan-out), \texttt{P1PatientQueryService} (tier-index refresh),
-\texttt{P1OnDemandConsultationHandler} (UC9 result delivery),
-\texttt{Av2GatewayRegistry} (heartbeat-interval re-calibration), and the
-\texttt{Av2CommunicationGateway} (for tier-aware acknowledgement
-deadlines). Centralising risk-state propagation onto one event topic
-prevents an $N{\times}M$ matrix of point-to-point notifications and is
-the architectural pre-condition for both the tier index of AD-P1-2 and
-the heartbeat re-calibration of AD-Av2-3.
+fan-out via \texttt{P1RiskEventSubscriber}),
+\texttt{P1PatientQueryService} (tier-index refresh), and
+\texttt{P1OnDemandConsultationHandler} (UC9 result delivery).
+Centralising risk-state propagation onto one event topic prevents an
+$N{\times}M$ matrix of point-to-point notifications and is the
+architectural pre-condition for the tier index of AD-P1-2 as well as
+the recipient fan-out and UC9 correlation match of AD-P1-4 and
+AD-P1-5.
 
 \paragraph{(OD-4) Three deployment profiles.}
 The deployment view retains the \emph{primary} (logical), \emph{pilot}
@@ -1086,7 +1105,7 @@ recording for future iterations:
 \end{itemize}
 
 \bigskip
-The final architecture --- diagrams (client-server, decomposition,
-deployment, process view) and the full element catalog --- is provided
-in the appendices, generated from the Visual Paradigm project through
-the SAPlugin.
+The final architecture --- diagrams (system context, client-server,
+decomposition, deployment, process view) and the full element catalog
+--- is provided in the appendices, generated from the Visual Paradigm
+project through the SAPlugin.
