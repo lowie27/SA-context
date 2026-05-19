@@ -14,7 +14,7 @@ models} (Medium) and \texttt{M2: New or optimized clinical models} (High).
 From the catalogue of provided QASs the following two scenarios are
 addressed:
 \begin{itemize}
-  \item \textbf{Av2 -- Communication between patient gateways and the
+  \item \textbf{Av2: Communication between patient gateways and the
         \textsc{pms} backend (High).}
         The \textsc{pms} availability of the end-to-end sensor-data path
         depends on (i) the external telecom channel, (ii) the patient
@@ -26,11 +26,12 @@ addressed:
         $T{+}5$\,min missing-data detection, 5\,s internal-failure
         detection, 2/5/10\,min stakeholder notification per risk level,
         5\,min redeployment, 24\,h local buffering on the gateway).
-  \item \textbf{P1 -- Data exchange with physicians (Medium).}
+  \item \textbf{P1: Data exchange with physicians (Medium).}
         The throughput-bounded scenario in which the \textsc{pms} handles
         physician-initiated reads (UC6), on-demand consultations (UC9), risk
         re-configuration (UC7), risk-level updates (UC8), and
-        \emph{outbound} notifications to registered physicians (UC5). The
+        event-driven notifications dispatched to a per-physician inbox for
+        registered physicians (UC5). The
         scenario imposes per-tier latency SLAs (2/5/10\,s reads), a
         100\,notifications/min throughput target with strict priority order
         (red\,$>$\,yellow\,$>$\,green) and a non-interference requirement
@@ -48,8 +49,9 @@ concrete, QAS-driven components, organised in two cohesive subsystems:
         ingestion), the monitoring/recovery tier, and the administrative
         redeployment control plane;
   \item a \emph{P1-subsystem} that owns the physician-facing gateway, the
-        tiered query/command services, the outbound notification
-        dispatcher, the patient-data service (sensor data + EHR proxy),
+        tiered query/command services, the event-driven notification
+        dispatcher with a per-physician inbox, the patient-data service
+        (sensor data + EHR proxy),
         and the patient-status cache.
 \end{enumerate}
 Both subsystems are layered on top of the unchanged risk-estimation
@@ -447,7 +449,7 @@ catastrophic-failure scenario the QAS actually targets.
         \texttt{P1PatientStatusCache} sits in front of the authoritative
         \texttt{P1PatientDataService} and pins high-risk patients in
         memory so that the 2\,s deadline is reachable under normal load.
-  \item[(AD-P1-4)] \textbf{Push-based notifications with priority buffer
+  \item[(AD-P1-4)] \textbf{Event-driven notifications with priority buffer
         and durable log.}
         \texttt{P1NotificationDispatcher} subscribes to
         \texttt{P1IRiskEvents}, resolves recipients through the
@@ -466,7 +468,7 @@ catastrophic-failure scenario the QAS actually targets.
         physician via \texttt{P1IConsultationResultPush}, no polling.
   \item[(AD-P1-6)] \textbf{Stale-tolerant EHR proxy.}
         \texttt{P1EHRProxyModule} fronts the external \texttt{HIS} with a
-        cache invalidated on \textsc{pms}-initiated writes only -- a
+        cache invalidated on \textsc{pms}-initiated writes only. This is a
         documented sensitivity point with respect to externally-initiated
         HIS changes.
 \end{description}
@@ -498,8 +500,8 @@ without performing any business logic. This is the standard \emph{gateway}
 pattern, motivated here by three concerns:
 \begin{enumerate}
   \item \emph{Independent scalability.} UC6 reads, UC7/8/9 writes, and
-        UC5 outbound notifications have different rate envelopes (25/min,
-        20/min and 100/min respectively) and different concurrency
+        UC5 notifications have different rate envelopes (25/min, 20/min
+        and 100/min respectively) and different concurrency
         profiles. Co-locating them behind one service would force a
         single thread/connection budget to absorb the worst case of all
         three.
@@ -531,29 +533,30 @@ that maps \texttt{PatientId} $\rightarrow$ \texttt{RiskTier}. The tier
 index is kept current by subscribing to \texttt{P1IRiskEvents}: every
 status change pushed by \texttt{P1PatientStatusModule} (see AD-P1-4)
 updates the index in $O(1)$. The hot path of a UC6 read is then a single
-hash lookup followed by an enqueue onto the correct priority tier --
+hash lookup followed by an enqueue onto the correct priority tier.
 $O(1)$ on the hot path is the sensitivity point of this decision.
 Unknown patients default to the \emph{HIGH} tier so that the SLA fails
 safe when the index is cold (e.g.\ right after a restart).
 
 \paragraph{(AD-P1-3) Read-through cache with high-risk pinning.}
 \texttt{P1PatientStatusCache} sits between \texttt{P1PatientQueryService}
-and the authoritative \texttt{P1PatientDataService}, exposing
+and \texttt{P1PatientStatusModule} (the authoritative status owner
+inside \texttt{P1PatientDataService}), exposing
 \texttt{P1IPatientStatusRead}. The cache uses a read-through strategy:
 on miss, it consults \texttt{OtherDataMgmt} (provided by
 \texttt{P1PatientStatusModule}) and populates itself. High-risk patients
 are \emph{pinned} (never evicted) so the 2\,s deadline does not race a
-cache fill on a cold key -- pinning is essentially a memory-for-time
+cache fill on a cold key. Pinning is essentially a memory-for-time
 trade-off. Freshness is bounded by a short TTL on cached entries: the
 authoritative status lives in \texttt{P1PatientStatusModule} and any
 write through \texttt{setEstimatedPatientStatus} is visible to the next
 read after the TTL expires. We accept a brief staleness window on
 status reads because the event-driven path that physicians actually
-care about for timeliness -- the UC5 notification fan-out -- runs off
+care about for timeliness, the UC5 notification fan-out, runs off
 the \texttt{P1IRiskEvents} channel directly and does not depend on the
 cache.
 
-\paragraph{(AD-P1-4) Push-based notifications with priority buffer and
+\paragraph{(AD-P1-4) Event-driven notifications with priority buffer and
 durable log.}
 UC5 imposes the most timing-sensitive response measures of P1:
 red $\leq 10$\,s, yellow $\leq 30$\,s, green $\leq 1$\,min, sustained
@@ -599,7 +602,7 @@ to meet all of them simultaneously:
         the red/yellow/green deadlines (10/30/60\,s). If the primary
         delivery channel is unavailable, the
         \texttt{P1RiskEventSubscriber} can escalate red notifications
-        onto the \texttt{Av2EmergencyDispatch} backup path -- this is the
+        onto the \texttt{Av2EmergencyDispatch} backup path. This is the
         explicit reuse point between Av2 and P1.
 \end{itemize}
 
@@ -712,7 +715,7 @@ nature of the pipeline from the physician's client and prevents the
 client from listening to other notifications in the meantime, and
 (iii)~requires the \texttt{P1PhysicianGateway} to be stateful for the
 duration. The correlation-id design keeps the gateway stateless and the
-physician's channel free for concurrent UC5 notifications -- a hard
+physician's channel free for concurrent UC5 notifications, a hard
 requirement under the P1 throughput envelope.
 
 \paragraph{Allowing UC9 to use the standard scheduled path.}
@@ -856,7 +859,7 @@ the routine arrivals previously delivered through the
 (UC9) and \texttt{Priority=NORMAL} jobs from
 \texttt{P1ConfigurationHandler} (UC7) and \texttt{P1SensorIngestModule}
 (UC4 default). The processor pool is therefore \emph{reinforced} (its
-raison d'\^etre is now more concrete) but \emph{more tightly constrained}
+purpose is now more concrete) but \emph{more tightly constrained}
 (the worst-case arrival pattern is wider because UC9 priority jobs can
 preempt routine ones, increasing the variability of effective per-job
 latency for low-priority jobs).
@@ -971,7 +974,10 @@ disproportionate impact on one or more quality attributes.
 \section{Trade-off points}
 
 The following decisions are \emph{trade-off points} in the ATAM sense:
-they improve one quality at the explicit cost of another.
+they improve one quality at the explicit cost of another. In the
+headings below, $\uparrow$ marks a quality that the decision
+\emph{improves} and $\downarrow$ marks a quality that the decision
+\emph{degrades}.
 
 \paragraph{Broker-decoupled ingress (AD-Av2-2): availability $\uparrow$
 vs.\ end-to-end latency $\downarrow$.}
@@ -1002,7 +1008,7 @@ mitigate this by deploying the monitoring service on a separate
 outage would itself be visible to the \texttt{Av2AdminPortal} via the
 absence of \texttt{Av2SLAReporting} updates.
 
-\paragraph{Tier-index in-memory cache (AD-P1-2): UC6 latency $\uparrow$
+\paragraph{Tier-index in-memory cache (AD-P1-2): UC6 performance $\uparrow$
 vs.\ consistency $\downarrow$ for a millisecond window.}
 The tier index is updated reactively when \texttt{P1IRiskEvents} fires.
 Between the underlying status change and the index update, a UC6 read
@@ -1019,7 +1025,7 @@ reaching the physician. This is a deliberate trade-off \emph{prescribed}
 by the QAS itself (``no red or yellow notifications may be lost'' is
 the only completeness measure stated) and we adopt it verbatim.
 
-\paragraph{Stale-tolerant EHR proxy (AD-P1-6): read latency $\uparrow$
+\paragraph{Stale-tolerant EHR proxy (AD-P1-6): read performance $\uparrow$
 vs.\ externally-initiated update visibility $\downarrow$.}
 The cache is invalidated only on \textsc{pms}-initiated writes. External
 updates made directly to the HIS are not observed until the cache entry
@@ -1066,8 +1072,8 @@ following reasons:
         does not require any structural change to the architecture.
         The sensitivity points are exposed as configuration parameters
         rather than baked into the topology.
-  \item The single \emph{structural} commitment that is hard to reverse
-        -- the broker-decoupled ingress -- is justified by the High
+  \item The single \emph{structural} commitment that is hard to reverse,
+        the broker-decoupled ingress, is justified by the High
         priority of Av2 and is consistent with how the rest of the
         system already treats persistent state (compare M2's
         append-only \texttt{ClinicalModelDB}, which makes the same
